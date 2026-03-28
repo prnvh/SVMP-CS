@@ -136,7 +136,6 @@ celerybeat.pid
 
 # Environments
 .env
-.env.example
 .envrc
 .venv
 env/
@@ -207,8 +206,3 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-# Platform specific
-svmp-platform/
-requirements-platform.txt
-docker-compose.platform.yml
-.env.platform.example
