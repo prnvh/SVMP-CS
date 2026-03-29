@@ -8,7 +8,7 @@ from svmp_core.integrations import generate_completion
 from svmp_core.models import KnowledgeEntry
 
 _NO_MATCH_RESPONSE = (
-    "I couldn't find a reliable answer yet, so I'm handing this over to a human for help."
+    "I couldn't find a reliable answer to that just yet."
 )
 
 
@@ -25,6 +25,9 @@ async def generate_customer_response(
         raise IntegrationError("query must not be blank")
 
     if knowledge_entry is None:
+        return _NO_MATCH_RESPONSE
+
+    if not knowledge_entry.answer.strip():
         return _NO_MATCH_RESPONSE
 
     runtime_settings = settings or get_settings()

@@ -71,7 +71,29 @@ async def test_generate_customer_response_returns_no_match_fallback() -> None:
         settings=_settings(),
     )
 
-    assert "handing this over to a human" in result
+    assert result == "I couldn't find a reliable answer to that just yet."
+
+
+@pytest.mark.asyncio
+async def test_generate_customer_response_returns_fallback_for_blank_faq_answer() -> None:
+    """Blank FAQ answers should not be sent to the model."""
+
+    blank_answer_entry = KnowledgeEntry(
+        _id="faq-blank",
+        tenantId="Niyomilan",
+        domainId="general",
+        question="What do you guys do?",
+        answer="   ",
+        tags=["about"],
+    )
+
+    result = await generate_customer_response(
+        "What do you guys do?",
+        knowledge_entry=blank_answer_entry,
+        settings=_settings(),
+    )
+
+    assert result == "I couldn't find a reliable answer to that just yet."
 
 
 @pytest.mark.asyncio
