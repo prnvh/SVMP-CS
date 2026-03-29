@@ -45,4 +45,22 @@ The near-term goal is to:
 
 ## Status
 
-The repo is still in scaffolding mode. The next step is to replace the old mixed Mongo/Postgres plan with a file-by-file Mongo-first build plan and then implement the core incrementally with tests in the same commit as each major change.
+`svmp-core` is now runnable in its Mongo-first demo shape:
+
+- the FastAPI app boots and wires Workflow B / Workflow C scheduler jobs
+- webhook verification and inbound intake routes are available
+- Workflow A, Workflow B, and Workflow C all have integration coverage
+- a demo smoke test proves ingest -> process -> governance in one end-to-end path
+- a repeatable knowledge-base seed script is available under `scripts/`
+
+Detailed setup and demo instructions live in [`docs/demo_run_notes.md`](docs/demo_run_notes.md).
+
+## Quick Validation
+
+From the repo root, these commands give the fastest proof that the current demoable core is wired correctly:
+
+```bash
+python -m pytest svmp-core/tests/integration/test_main.py
+python -m pytest svmp-core/tests/integration/test_demo_smoke.py
+python -m pytest svmp-core/tests/integration/test_seed_script.py
+```
