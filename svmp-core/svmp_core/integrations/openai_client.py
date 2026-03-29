@@ -10,19 +10,21 @@ from svmp_core.config import Settings, get_settings
 from svmp_core.exceptions import IntegrationError
 
 _client: AsyncOpenAI | None = None
+_client_api_key: str | None = None
 
 
 def clear_openai_client_cache() -> None:
     """Reset the cached OpenAI client, mainly for tests."""
 
-    global _client
+    global _client, _client_api_key
     _client = None
+    _client_api_key = None
 
 
 def get_openai_client(*, settings: Settings | None = None) -> AsyncOpenAI:
     """Return a cached AsyncOpenAI client configured from settings."""
 
-    global _client
+    global _client, _client_api_key
 
     runtime_settings = settings or get_settings()
     api_key = runtime_settings.OPENAI_API_KEY
@@ -30,8 +32,13 @@ def get_openai_client(*, settings: Settings | None = None) -> AsyncOpenAI:
     if api_key is None:
         raise IntegrationError("OPENAI_API_KEY is not configured")
 
-    if _client is None:
-        _client = AsyncOpenAI(api_key=api_key.get_secret_value())
+    api_key_value = api_key.get_secret_value().strip()
+    if not api_key_value:
+        raise IntegrationError("OPENAI_API_KEY is not configured")
+
+    if _client is None or _client_api_key != api_key_value:
+        _client = AsyncOpenAI(api_key=api_key_value)
+        _client_api_key = api_key_value
 
     return _client
 

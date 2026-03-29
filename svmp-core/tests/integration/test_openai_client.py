@@ -53,6 +53,33 @@ def test_get_openai_client_caches_single_instance(monkeypatch: pytest.MonkeyPatc
     assert created == ["test-key"]
 
 
+def test_get_openai_client_rebuilds_when_api_key_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Changing the API key should not reuse a stale cached client."""
+
+    created: list[str] = []
+
+    class FakeAsyncOpenAI:
+        def __init__(self, *, api_key: str) -> None:
+            created.append(api_key)
+
+    monkeypatch.setattr("svmp_core.integrations.openai_client.AsyncOpenAI", FakeAsyncOpenAI)
+
+    first = get_openai_client(settings=_settings())
+    second = get_openai_client(
+        settings=Settings(
+            _env_file=None,
+            OPENAI_API_KEY="new-test-key",
+            EMBEDDING_MODEL="text-embedding-3-small",
+            LLM_MODEL="gpt-4o-mini",
+        )
+    )
+
+    assert first is not second
+    assert created == ["test-key", "new-test-key"]
+
+
 @pytest.mark.asyncio
 async def test_embed_text_uses_embedding_model(monkeypatch: pytest.MonkeyPatch) -> None:
     """Embedding calls should route through the wrapper with configured model."""
@@ -119,4 +146,18 @@ async def test_openai_wrapper_rejects_invalid_input() -> None:
             system_prompt="   ",
             user_prompt="hello",
             settings=_settings(),
+        )
+
+
+def test_get_openai_client_rejects_blank_api_key() -> None:
+    """Blank secret values should fail like missing configuration."""
+
+    with pytest.raises(IntegrationError, match="OPENAI_API_KEY is not configured"):
+        get_openai_client(
+            settings=Settings(
+                _env_file=None,
+                OPENAI_API_KEY="   ",
+                EMBEDDING_MODEL="text-embedding-3-small",
+                LLM_MODEL="gpt-4o-mini",
+            )
         )
