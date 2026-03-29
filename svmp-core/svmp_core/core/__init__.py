@@ -1,5 +1,11 @@
 """Core domain helpers for the SVMP runtime."""
 
+from svmp_core.core.escalation import (
+    EscalationRequest,
+    EscalationResult,
+    EscalationTarget,
+    request_escalation,
+)
 from svmp_core.core.governance import (
     build_answered_log,
     build_closed_log,
@@ -13,9 +19,13 @@ __all__ = [
     "IdentityFrame",
     "SimilarityDecision",
     "SimilarityOutcome",
+    "EscalationRequest",
+    "EscalationResult",
+    "EscalationTarget",
     "build_answered_log",
     "build_closed_log",
     "build_escalated_log",
     "build_governance_log",
     "evaluate_similarity",
+    "request_escalation",
 ]
