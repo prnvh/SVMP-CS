@@ -20,6 +20,18 @@ def test_infer_intent_marks_transactional_requests() -> None:
     assert infer_intent("Please cancel my order") == IntentType.TRANSACTIONAL
 
 
+def test_infer_intent_handles_punctuation_in_transactional_requests() -> None:
+    """Punctuation should not hide obvious transactional keywords."""
+
+    assert infer_intent("Refund!") == IntentType.TRANSACTIONAL
+
+
+def test_infer_intent_treats_questions_about_actions_as_informational() -> None:
+    """Question-style asks about an action should stay on the informational branch."""
+
+    assert infer_intent("How do I cancel my order?") == IntentType.INFORMATIONAL
+
+
 def test_infer_intent_uses_safe_escalate_fallback() -> None:
     """Ambiguous input should not be force-classified aggressively."""
 
