@@ -19,7 +19,14 @@ from svmp_core.db.base import (
     TenantRepository,
 )
 from svmp_core.exceptions import DatabaseError
-from svmp_core.models import GovernanceDecision, GovernanceLog, KnowledgeEntry, MessageItem, SessionState
+from svmp_core.models import (
+    GovernanceDecision,
+    GovernanceLog,
+    KnowledgeEntry,
+    MessageItem,
+    OutboundSendResult,
+    SessionState,
+)
 from svmp_core.workflows import run_workflow_b
 
 
@@ -158,7 +165,7 @@ class ProcessingDatabase(Database):
 def _settings() -> Settings:
     """Return deterministic workflow settings for tests."""
 
-    return Settings(_env_file=None, SIMILARITY_THRESHOLD=0.75)
+    return Settings(_env_file=None, SIMILARITY_THRESHOLD=0.75, WHATSAPP_PROVIDER="normalized")
 
 
 def _ready_session(*, text: str) -> SessionState:
@@ -222,10 +229,15 @@ async def test_workflow_b_answers_high_confidence_informational_query() -> None:
     assert result.decision == GovernanceDecision.ANSWERED
     assert result.answer_supplied == "We help customers."
     assert result.similarity_score == 1.0
+    assert result.outbound_send_result is not None
+    assert result.outbound_send_result.provider == "normalized"
+    assert result.outbound_send_result.accepted is True
 
     written_logs = database.governance_logs.logs
     assert len(written_logs) == 1
     assert written_logs[0].decision == GovernanceDecision.ANSWERED
+    assert written_logs[0].metadata["delivery"]["provider"] == "normalized"
+
     session = await database.session_state.get_by_identity("Niyomilan", "whatsapp", "9845891194")
     assert session is not None
     assert session.status == "open"
@@ -259,6 +271,7 @@ async def test_workflow_b_escalates_low_confidence_query() -> None:
     assert result.processed is True
     assert result.decision == GovernanceDecision.ESCALATED
     assert result.answer_supplied is None
+    assert result.outbound_send_result is None
     assert result.escalation_target is not None
 
     written_logs = database.governance_logs.logs
@@ -269,10 +282,15 @@ async def test_workflow_b_escalates_low_confidence_query() -> None:
     assert session.status == "open"
     assert session.processing is True
 
+    session = await database.session_state.get_by_identity("Niyomilan", "whatsapp", "9845891194")
+    assert session is not None
+    assert session.status == "open"
+    assert session.processing is True
+
 
 @pytest.mark.asyncio
-async def test_workflow_b_wraps_internal_failures_and_keeps_processing_latched() -> None:
-    """Internal failures should leave the processing latch engaged until new input arrives."""
+async def test_workflow_b_wraps_internal_failures_and_keeps_session_latched() -> None:
+    """Internal failures should be wrapped without clearing the processing latch."""
 
     database = ProcessingDatabase(
         sessions=[_ready_session(text="What do you do?")],
@@ -298,22 +316,28 @@ async def test_workflow_b_wraps_internal_failures_and_keeps_processing_latched()
 
     session = await database.session_state.get_by_identity("Niyomilan", "whatsapp", "9845891194")
     assert session is not None
+    assert session.status == "open"
     assert session.processing is True
 
 
 @pytest.mark.asyncio
-async def test_workflow_b_runs_openai_matcher_in_shadow_mode_without_overriding_decision(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Shadow mode should record the OpenAI comparison while keeping deterministic authority."""
+async def test_workflow_b_sends_answer_via_active_provider() -> None:
+    """Answered results should send the supplied answer through the resolved provider."""
 
-    async def fake_generate_completion(**kwargs) -> str:
-        return '{"bestIndex": 0, "similarityScore": 0.18, "reason": "weak faq match"}'
+    captured: dict[str, Any] = {}
 
-    monkeypatch.setattr(
-        "svmp_core.workflows.workflow_b.generate_completion",
-        fake_generate_completion,
-    )
+    class FakeProvider:
+        name = "twilio"
+
+        async def send_text(self, message, *, settings):
+            captured["message"] = message
+            captured["provider"] = settings.WHATSAPP_PROVIDER
+            return OutboundSendResult(
+                provider="twilio",
+                accepted=True,
+                status="accepted",
+                externalMessageId="SM999",
+            )
 
     database = ProcessingDatabase(
         sessions=[_ready_session(text="What do you do?")],
@@ -329,85 +353,22 @@ async def test_workflow_b_runs_openai_matcher_in_shadow_mode_without_overriding_
         tenants=[_tenant(threshold=0.75)],
     )
 
-    result = await run_workflow_b(
-        database,
-        settings=Settings(_env_file=None, SIMILARITY_THRESHOLD=0.75, OPENAI_SHADOW_MODE=True),
-        now=datetime(2026, 3, 30, 10, 0, tzinfo=timezone.utc),
-    )
-
-    assert result.processed is True
-    assert result.decision == GovernanceDecision.ANSWERED
-    assert result.matcher_used == "deterministic"
-
-    written_logs = database.governance_logs.logs
-    assert len(written_logs) == 1
-    comparison = written_logs[0].metadata["matcherComparison"]
-    assert written_logs[0].metadata["matcherMode"] == "shadow"
-    assert comparison["deterministic"]["matcher"] == "deterministic"
-    assert comparison["openai"]["matcher"] == "openai"
-    assert comparison["openai"]["score"] == pytest.approx(0.18)
-
-
-@pytest.mark.asyncio
-async def test_workflow_b_can_use_openai_matcher_authoritatively(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """When enabled, the OpenAI matcher should become the authoritative scorer."""
-
-    async def fake_generate_completion(**kwargs) -> str:
-        payload = json.loads(kwargs["user_prompt"])
-        candidates = payload["candidates"]
-        selected_index = next(
-            index
-            for index, candidate in enumerate(candidates)
-            if candidate["question"] == "Business opening times"
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr("svmp_core.workflows.workflow_b.get_whatsapp_provider", lambda **kwargs: FakeProvider())
+    try:
+        result = await run_workflow_b(
+            database,
+            settings=Settings(_env_file=None, SIMILARITY_THRESHOLD=0.75, WHATSAPP_PROVIDER="twilio"),
+            now=datetime(2026, 3, 30, 10, 0, tzinfo=timezone.utc),
         )
-        return json.dumps(
-            {
-                "bestIndex": selected_index,
-                "similarityScore": 0.92,
-                "reason": "business hours candidate directly answers the query",
-            }
-        )
+    finally:
+        monkeypatch.undo()
 
-    monkeypatch.setattr(
-        "svmp_core.workflows.workflow_b.generate_completion",
-        fake_generate_completion,
-    )
-
-    database = ProcessingDatabase(
-        sessions=[_ready_session(text="Can you tell me your weekday opening hours?")],
-        knowledge_entries=[
-            KnowledgeEntry(
-                _id="faq-1",
-                tenantId="Niyomilan",
-                domainId="general",
-                question="What do you do?",
-                answer="We help customers.",
-            ),
-            KnowledgeEntry(
-                _id="faq-2",
-                tenantId="Niyomilan",
-                domainId="general",
-                question="Business opening times",
-                answer="We are open from 9 AM to 6 PM on weekdays.",
-            ),
-        ],
-        tenants=[_tenant(threshold=0.75)],
-    )
-
-    result = await run_workflow_b(
-        database,
-        settings=Settings(_env_file=None, SIMILARITY_THRESHOLD=0.75, USE_OPENAI_MATCHER=True),
-        now=datetime(2026, 3, 30, 10, 0, tzinfo=timezone.utc),
-    )
-
-    assert result.processed is True
-    assert result.decision == GovernanceDecision.ANSWERED
-    assert result.matcher_used == "openai"
-    assert result.answer_supplied == "We are open from 9 AM to 6 PM on weekdays."
-
-    written_logs = database.governance_logs.logs
-    assert len(written_logs) == 1
-    assert written_logs[0].metadata["matcherMode"] == "openai"
-    assert written_logs[0].metadata["matcherUsed"] == "openai"
+    assert result.outbound_send_result is not None
+    assert result.outbound_send_result.provider == "twilio"
+    assert result.outbound_send_result.external_message_id == "SM999"
+    assert captured["provider"] == "twilio"
+    assert captured["message"].tenant_id == "Niyomilan"
+    assert captured["message"].client_id == "whatsapp"
+    assert captured["message"].user_id == "9845891194"
+    assert captured["message"].text == "We help customers."

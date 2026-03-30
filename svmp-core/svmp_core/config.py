@@ -59,6 +59,9 @@ class Settings(BaseSettings):
     WHATSAPP_TOKEN: SecretStr | None = None
     WHATSAPP_PHONE_NUMBER_ID: str | None = None
     WHATSAPP_VERIFY_TOKEN: SecretStr | None = None
+    TWILIO_ACCOUNT_SID: str | None = None
+    TWILIO_AUTH_TOKEN: SecretStr | None = None
+    TWILIO_WHATSAPP_NUMBER: str | None = None
 
     DEBOUNCE_MS: int = 2500
     SIMILARITY_THRESHOLD: float = 0.75
@@ -66,7 +69,7 @@ class Settings(BaseSettings):
     WORKFLOW_C_INTERVAL_HOURS: int = 24
 
     def validate_runtime(self) -> None:
-        """Fail fast when the live demo runtime is missing required env values."""
+        """Fail fast when the live runtime is missing required env values."""
 
         missing: list[str] = []
 
@@ -82,6 +85,13 @@ class Settings(BaseSettings):
                 missing.append("WHATSAPP_PHONE_NUMBER_ID")
             if self.WHATSAPP_VERIFY_TOKEN is None or _normalized_secret(self.WHATSAPP_VERIFY_TOKEN) is None:
                 missing.append("WHATSAPP_VERIFY_TOKEN")
+        elif provider == "twilio":
+            if _missing_string(self.TWILIO_ACCOUNT_SID):
+                missing.append("TWILIO_ACCOUNT_SID")
+            if self.TWILIO_AUTH_TOKEN is None or _normalized_secret(self.TWILIO_AUTH_TOKEN) is None:
+                missing.append("TWILIO_AUTH_TOKEN")
+            if _missing_string(self.TWILIO_WHATSAPP_NUMBER):
+                missing.append("TWILIO_WHATSAPP_NUMBER")
         elif provider != "normalized":
             missing.append("WHATSAPP_PROVIDER")
 

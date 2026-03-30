@@ -211,6 +211,52 @@ async def test_workflow_a_appends_follow_up_message_and_resets_debounce() -> Non
 
 
 @pytest.mark.asyncio
+async def test_workflow_a_reopens_existing_identity_session_when_new_input_arrives() -> None:
+    """New input should reuse the existing identity session and reopen it for processing."""
+
+    database = InMemoryDatabase()
+    first_now = datetime(2026, 3, 30, 10, 0, tzinfo=timezone.utc)
+    second_now = first_now + timedelta(seconds=4)
+
+    session = await run_workflow_a(
+        database,
+        WebhookPayload(
+            tenantId="Niyomilan",
+            clientId="whatsapp",
+            userId="9845891194",
+            text="hi",
+        ),
+        settings=_settings(),
+        now=first_now,
+    )
+
+    seeded = await database.session_state.update_by_id(
+        session.id,
+        {"status": "closed", "processing": True},
+    )
+    assert seeded is not None
+    assert seeded.status == "closed"
+    assert seeded.processing is True
+
+    reopened = await run_workflow_a(
+        database,
+        WebhookPayload(
+            tenantId="Niyomilan",
+            clientId="whatsapp",
+            userId="9845891194",
+            text="what do you do?",
+        ),
+        settings=_settings(),
+        now=second_now,
+    )
+
+    assert reopened.id == session.id
+    assert reopened.status == "open"
+    assert reopened.processing is False
+    assert reopened.messages[-1].text == "what do you do?"
+
+
+@pytest.mark.asyncio
 async def test_workflow_a_rejects_blank_inbound_text() -> None:
     """Blank inbound text should fail safely before touching persistence."""
 

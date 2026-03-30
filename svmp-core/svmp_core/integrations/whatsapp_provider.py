@@ -36,6 +36,30 @@ def _normalize_phone_identity(value: str) -> str:
     return normalized
 
 
+def _integration_error_detail(response: httpx.Response) -> str:
+    """Extract a readable provider error detail from a failed HTTP response."""
+
+    try:
+        payload = response.json()
+    except ValueError:
+        text = response.text.strip()
+        return text or f"HTTP {response.status_code}"
+
+    if isinstance(payload, Mapping):
+        for key in ("message", "detail"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+
+        nested_error = payload.get("error")
+        if isinstance(nested_error, Mapping):
+            message = nested_error.get("message")
+            if isinstance(message, str) and message.strip():
+                return message.strip()
+
+    return str(payload)
+
+
 class WhatsAppProvider(ABC):
     """Provider abstraction for ingress normalization and outbound sending."""
 
@@ -62,6 +86,16 @@ class WhatsAppProvider(ABC):
         """Normalize a JSON provider payload into internal webhook payloads."""
 
         raise ValidationError(f"{self.name} does not accept JSON webhook payloads")
+
+    def normalize_form_payload(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        tenant_id: str | None,
+    ) -> list[WebhookPayload]:
+        """Normalize a form provider payload into internal webhook payloads."""
+
+        raise ValidationError(f"{self.name} does not accept form webhook payloads")
 
     @abstractmethod
     async def send_text(
@@ -222,7 +256,10 @@ class MetaWhatsAppProvider(WhatsAppProvider):
                 },
                 json=payload,
             )
-            response.raise_for_status()
+            if response.is_error:
+                raise IntegrationError(
+                    f"Meta send failed ({response.status_code}): {_integration_error_detail(response)}"
+                )
             body = response.json()
 
         message_id = None
@@ -241,9 +278,87 @@ class MetaWhatsAppProvider(WhatsAppProvider):
         )
 
 
+class TwilioWhatsAppProvider(WhatsAppProvider):
+    """Provider adapter for Twilio WhatsApp webhook payloads."""
+
+    name = "twilio"
+
+    def normalize_form_payload(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        tenant_id: str | None,
+    ) -> list[WebhookPayload]:
+        resolved_tenant_id = _require_non_blank(tenant_id, "tenantId")
+        body = payload.get("Body")
+        from_user = payload.get("From")
+
+        if not isinstance(body, str) or not body.strip():
+            raise ValidationError("Twilio webhook Body is required")
+        if not isinstance(from_user, str) or not from_user.strip():
+            raise ValidationError("Twilio webhook From is required")
+
+        return [
+            WebhookPayload(
+                tenantId=resolved_tenant_id,
+                clientId="whatsapp",
+                userId=_normalize_phone_identity(from_user),
+                text=body,
+                provider=self.name,
+                externalMessageId=payload.get("MessageSid"),
+            )
+        ]
+
+    async def send_text(
+        self,
+        message: OutboundTextMessage,
+        *,
+        settings: Settings,
+    ) -> OutboundSendResult:
+        account_sid = settings.TWILIO_ACCOUNT_SID
+        auth_token = settings.TWILIO_AUTH_TOKEN
+        from_number = settings.TWILIO_WHATSAPP_NUMBER
+
+        if account_sid is None or not account_sid.strip():
+            raise IntegrationError("TWILIO_ACCOUNT_SID is not configured")
+        if auth_token is None:
+            raise IntegrationError("TWILIO_AUTH_TOKEN is not configured")
+        if from_number is None or not from_number.strip():
+            raise IntegrationError("TWILIO_WHATSAPP_NUMBER is not configured")
+
+        url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json"
+        form_data = {
+            "From": from_number,
+            "To": message.user_id if message.user_id.startswith("whatsapp:") else f"whatsapp:{message.user_id}",
+            "Body": message.text,
+        }
+
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            response = await client.post(
+                url,
+                data=form_data,
+                auth=(account_sid, auth_token.get_secret_value()),
+            )
+            if response.is_error:
+                raise IntegrationError(
+                    f"Twilio send failed ({response.status_code}): {_integration_error_detail(response)}"
+                )
+            body = response.json()
+
+        sid = body.get("sid") if isinstance(body, Mapping) else None
+        return OutboundSendResult(
+            provider=self.name,
+            accepted=True,
+            external_message_id=sid if isinstance(sid, str) else None,
+            status="accepted",
+            metadata={"response": body},
+        )
+
+
 _PROVIDERS: dict[str, WhatsAppProvider] = {
     "normalized": NormalizedWhatsAppProvider(),
     "meta": MetaWhatsAppProvider(),
+    "twilio": TwilioWhatsAppProvider(),
 }
 
 
@@ -259,6 +374,7 @@ def get_whatsapp_provider(
     settings: Settings,
     requested_provider: str | None = None,
     payload: Mapping[str, Any] | None = None,
+    content_type: str | None = None,
 ) -> WhatsAppProvider:
     """Resolve the provider adapter for the current webhook request."""
 
@@ -266,6 +382,8 @@ def get_whatsapp_provider(
         provider_name = requested_provider.strip().lower()
     elif payload is not None and is_normalized_payload(payload):
         provider_name = "normalized"
+    elif content_type is not None and "application/x-www-form-urlencoded" in content_type.lower():
+        provider_name = "twilio"
     else:
         provider_name = settings.WHATSAPP_PROVIDER.strip().lower()
 

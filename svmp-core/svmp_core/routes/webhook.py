@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from json import JSONDecodeError
-from typing import Any
+from urllib.parse import parse_qsl
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request, Response, status
 
@@ -69,31 +69,42 @@ def build_webhook_router(
         provider_query: str | None = Query(default=None, alias="provider"),
         tenant_id_header: str | None = Header(default=None, alias="X-SVMP-Tenant-Id"),
         provider_header: str | None = Header(default=None, alias="X-SVMP-Provider"),
-    ) -> dict[str, Any]:
+    ) -> dict[str, str]:
+        content_type = request.headers.get("content-type")
         resolved_tenant_id = tenant_id_header or tenant_id_query
         requested_provider = provider_header or provider_query
 
         try:
-            raw_payload = await request.json()
-            if not isinstance(raw_payload, Mapping):
-                raise ValidationError("webhook payload must be a JSON object")
+            if content_type is not None and "application/x-www-form-urlencoded" in content_type.lower():
+                raw_payload = dict(parse_qsl((await request.body()).decode("utf-8"), keep_blank_values=True))
+            else:
+                raw_payload = await request.json()
+                if not isinstance(raw_payload, Mapping):
+                    raise ValidationError("webhook payload must be a JSON object")
 
             provider = get_whatsapp_provider(
                 settings=runtime_settings,
                 requested_provider=requested_provider,
                 payload=raw_payload if isinstance(raw_payload, Mapping) else None,
+                content_type=content_type,
             )
 
-            payloads = provider.normalize_json_payload(
-                raw_payload,
-                tenant_id=resolved_tenant_id,
-            )
+            if content_type is not None and "application/x-www-form-urlencoded" in content_type.lower():
+                payloads = provider.normalize_form_payload(
+                    raw_payload,
+                    tenant_id=resolved_tenant_id,
+                )
+            else:
+                payloads = provider.normalize_json_payload(
+                    raw_payload,
+                    tenant_id=resolved_tenant_id,
+                )
         except JSONDecodeError as exc:
             raise _http_400("webhook payload must be valid JSON") from exc
         except ValidationError as exc:
             raise _http_400(str(exc)) from exc
 
-        session_ids: list[str] = []
+        session_id = ""
 
         try:
             for payload in payloads:
@@ -102,17 +113,16 @@ def build_webhook_router(
                     payload,
                     settings=runtime_settings,
                 )
-                if session.id is not None:
-                    session_ids.append(session.id)
+                if session.id is not None and not session_id:
+                    session_id = session.id
+        except ValidationError as exc:
+            raise _http_400(str(exc)) from exc
         except DatabaseError as exc:
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
 
         return {
             "status": "accepted",
-            "provider": provider.name,
-            "messageCount": len(payloads),
-            "sessionId": session_ids[0] if session_ids else "",
-            "sessionIds": session_ids,
+            "sessionId": session_id,
         }
 
     return router

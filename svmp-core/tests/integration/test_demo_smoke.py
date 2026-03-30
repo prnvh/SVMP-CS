@@ -218,6 +218,7 @@ def _settings() -> Settings:
         APP_NAME="SVMP-Smoke",
         MONGODB_URI="mongodb://unit-test",
         OPENAI_API_KEY="test-key",
+        WHATSAPP_PROVIDER="normalized",
         WHATSAPP_TOKEN="test-whatsapp-token",
         WHATSAPP_PHONE_NUMBER_ID="1234567890",
         WHATSAPP_VERIFY_TOKEN="verify-me",
@@ -266,6 +267,8 @@ async def test_demo_smoke_ingest_then_process_writes_governance_log() -> None:
         assert result.decision == GovernanceDecision.ANSWERED
         assert result.answer_supplied == "We help customers."
         assert result.similarity_score == 1.0
+        assert result.outbound_send_result is not None
+        assert result.outbound_send_result.provider == "normalized"
 
         session = await database.session_state.get_by_identity("Niyomilan", "whatsapp", "9845891194")
         assert session is not None
@@ -277,3 +280,4 @@ async def test_demo_smoke_ingest_then_process_writes_governance_log() -> None:
         assert written_logs[0].decision == GovernanceDecision.ANSWERED
         assert written_logs[0].combined_text == "What do you do?"
         assert written_logs[0].answer_supplied == "We help customers."
+        assert written_logs[0].metadata["delivery"]["provider"] == "normalized"
