@@ -22,7 +22,14 @@ from svmp_core.core import (
 )
 from svmp_core.db.base import Database
 from svmp_core.exceptions import DatabaseError, RoutingError
-from svmp_core.models import GovernanceDecision, KnowledgeEntry, SessionState
+from svmp_core.integrations import get_whatsapp_provider
+from svmp_core.models import (
+    GovernanceDecision,
+    KnowledgeEntry,
+    OutboundSendResult,
+    OutboundTextMessage,
+    SessionState,
+)
 
 
 _TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
@@ -92,6 +99,30 @@ def _fallback_domain_id(tenant_document: Mapping[str, Any] | None) -> str | None
     return None
 
 
+async def _send_answer_reply(
+    identity: IdentityFrame,
+    answer_text: str,
+    *,
+    settings: Settings,
+) -> OutboundSendResult:
+    """Send an answered response back through the active WhatsApp provider."""
+
+    provider = get_whatsapp_provider(
+        settings=settings,
+        requested_provider=settings.WHATSAPP_PROVIDER,
+    )
+    return await provider.send_text(
+        OutboundTextMessage(
+            tenantId=identity.tenant_id,
+            clientId=identity.client_id,
+            userId=identity.user_id,
+            text=answer_text,
+            provider=provider.name,
+        ),
+        settings=settings,
+    )
+
+
 @dataclass(frozen=True)
 class WorkflowBResult:
     """Summary of a Workflow B processing run."""
@@ -103,6 +134,7 @@ class WorkflowBResult:
     domain_id: str | None
     similarity_score: float | None
     answer_supplied: str | None
+    outbound_send_result: OutboundSendResult | None
     escalation_target: EscalationTarget | None
     reason: str | None
 
@@ -130,6 +162,7 @@ async def run_workflow_b(
                 domain_id=None,
                 similarity_score=None,
                 answer_supplied=None,
+                outbound_send_result=None,
                 escalation_target=None,
                 reason=None,
             )
@@ -171,6 +204,7 @@ async def run_workflow_b(
                 domain_id=None,
                 similarity_score=None,
                 answer_supplied=None,
+                outbound_send_result=None,
                 escalation_target=escalation.target,
                 reason=escalation.reason,
             )
@@ -213,6 +247,7 @@ async def run_workflow_b(
                 domain_id=None,
                 similarity_score=None,
                 answer_supplied=None,
+                outbound_send_result=None,
                 escalation_target=escalation.target,
                 reason=escalation.reason,
             )
@@ -229,12 +264,24 @@ async def run_workflow_b(
         )
 
         if similarity_decision.should_answer and best_entry is not None:
+            send_result = await _send_answer_reply(
+                identity,
+                best_entry.answer,
+                settings=runtime_settings,
+            )
             log = build_answered_log(
                 identity,
                 combined_text,
                 similarity_score=similarity_decision.score or 0.0,
                 answer_supplied=best_entry.answer,
-                metadata={"domainId": domain_id},
+                metadata={
+                    "domainId": domain_id,
+                    "delivery": {
+                        "provider": send_result.provider,
+                        "status": send_result.status,
+                        "externalMessageId": send_result.external_message_id,
+                    },
+                },
                 timestamp=current_time,
             )
             await database.governance_logs.create(log)
@@ -246,6 +293,7 @@ async def run_workflow_b(
                 domain_id=domain_id,
                 similarity_score=similarity_decision.score,
                 answer_supplied=best_entry.answer,
+                outbound_send_result=send_result,
                 escalation_target=None,
                 reason=similarity_decision.reason,
             )
@@ -276,6 +324,7 @@ async def run_workflow_b(
             domain_id=domain_id,
             similarity_score=similarity_decision.score,
             answer_supplied=None,
+            outbound_send_result=None,
             escalation_target=escalation.target,
             reason=escalation.reason,
         )

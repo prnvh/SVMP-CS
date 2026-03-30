@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from svmp_core.config import Settings
+from svmp_core.exceptions import IntegrationError
 from svmp_core.integrations.whatsapp_provider import TwilioWhatsAppProvider
 from svmp_core.models import OutboundTextMessage
 
@@ -41,6 +42,8 @@ async def test_twilio_provider_send_text_uses_rest_api(monkeypatch: pytest.Monke
     captured: dict[str, Any] = {}
 
     class FakeResponse:
+        is_error = False
+
         def raise_for_status(self) -> None:
             return None
 
@@ -92,3 +95,50 @@ async def test_twilio_provider_send_text_uses_rest_api(monkeypatch: pytest.Monke
     assert result.accepted is True
     assert result.external_message_id == "SM999"
     assert result.status == "accepted"
+
+
+@pytest.mark.asyncio
+async def test_twilio_provider_send_text_surfaces_provider_error_detail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Twilio outbound failures should expose the provider's response message."""
+
+    class FakeResponse:
+        status_code = 400
+        is_error = True
+
+        def json(self) -> dict[str, str]:
+            return {"message": "The From address whatsapp:+14155238886 is not enabled for this account."}
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs) -> None:
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        async def post(self, url, data=None, auth=None):
+            return FakeResponse()
+
+    monkeypatch.setattr("svmp_core.integrations.whatsapp_provider.httpx.AsyncClient", FakeAsyncClient)
+
+    provider = TwilioWhatsAppProvider()
+
+    with pytest.raises(IntegrationError, match="Twilio send failed \\(400\\): The From address"):
+        await provider.send_text(
+            OutboundTextMessage(
+                tenantId="Niyomilan",
+                clientId="whatsapp",
+                userId="+919845891194",
+                text="hello from svmp",
+            ),
+            settings=Settings(
+                _env_file=None,
+                TWILIO_ACCOUNT_SID="AC123",
+                TWILIO_AUTH_TOKEN="secret",
+                TWILIO_WHATSAPP_NUMBER="whatsapp:+14155238886",
+            ),
+        )

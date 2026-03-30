@@ -36,6 +36,30 @@ def _normalize_phone_identity(value: str) -> str:
     return normalized
 
 
+def _integration_error_detail(response: httpx.Response) -> str:
+    """Extract a readable provider error detail from a failed HTTP response."""
+
+    try:
+        payload = response.json()
+    except ValueError:
+        text = response.text.strip()
+        return text or f"HTTP {response.status_code}"
+
+    if isinstance(payload, Mapping):
+        for key in ("message", "detail"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+
+        nested_error = payload.get("error")
+        if isinstance(nested_error, Mapping):
+            message = nested_error.get("message")
+            if isinstance(message, str) and message.strip():
+                return message.strip()
+
+    return str(payload)
+
+
 class WhatsAppProvider(ABC):
     """Provider abstraction for ingress normalization and outbound sending."""
 
@@ -234,7 +258,10 @@ class MetaWhatsAppProvider(WhatsAppProvider):
                 },
                 json=payload,
             )
-            response.raise_for_status()
+            if response.is_error:
+                raise IntegrationError(
+                    f"Meta send failed ({response.status_code}): {_integration_error_detail(response)}"
+                )
             body = response.json()
 
         message_id = None
@@ -314,7 +341,10 @@ class TwilioWhatsAppProvider(WhatsAppProvider):
                 data=form_data,
                 auth=(account_sid, auth_token.get_secret_value()),
             )
-            response.raise_for_status()
+            if response.is_error:
+                raise IntegrationError(
+                    f"Twilio send failed ({response.status_code}): {_integration_error_detail(response)}"
+                )
             body = response.json()
 
         sid = body.get("sid") if isinstance(body, Mapping) else None
