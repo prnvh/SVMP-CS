@@ -35,7 +35,6 @@ class ProcessingSessionRepository(SessionStateRepository):
                 session.tenant_id == tenant_id
                 and session.client_id == client_id
                 and session.user_id == user_id
-                and session.status == "open"
             ):
                 return session.model_copy(deep=True)
         return None
@@ -227,6 +226,10 @@ async def test_workflow_b_answers_high_confidence_informational_query() -> None:
     written_logs = database.governance_logs.logs
     assert len(written_logs) == 1
     assert written_logs[0].decision == GovernanceDecision.ANSWERED
+    session = await database.session_state.get_by_identity("Niyomilan", "whatsapp", "9845891194")
+    assert session is not None
+    assert session.status == "open"
+    assert session.processing is True
 
 
 @pytest.mark.asyncio
@@ -261,11 +264,15 @@ async def test_workflow_b_escalates_low_confidence_query() -> None:
     written_logs = database.governance_logs.logs
     assert len(written_logs) == 1
     assert written_logs[0].decision == GovernanceDecision.ESCALATED
+    session = await database.session_state.get_by_identity("Niyomilan", "whatsapp", "9845891194")
+    assert session is not None
+    assert session.status == "open"
+    assert session.processing is True
 
 
 @pytest.mark.asyncio
-async def test_workflow_b_wraps_internal_failures_and_releases_session() -> None:
-    """Internal failures should be wrapped and release the processing lock for retry."""
+async def test_workflow_b_wraps_internal_failures_and_keeps_processing_latched() -> None:
+    """Internal failures should leave the processing latch engaged until new input arrives."""
 
     database = ProcessingDatabase(
         sessions=[_ready_session(text="What do you do?")],
@@ -291,7 +298,7 @@ async def test_workflow_b_wraps_internal_failures_and_releases_session() -> None
 
     session = await database.session_state.get_by_identity("Niyomilan", "whatsapp", "9845891194")
     assert session is not None
-    assert session.processing is False
+    assert session.processing is True
 
 
 @pytest.mark.asyncio
