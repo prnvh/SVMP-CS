@@ -215,6 +215,9 @@ async def test_session_repository_round_trip_and_ready_acquisition() -> None:
     updated = await database.session_state.update_by_id(created.id, {"status": "closed"})
     assert updated is not None
     assert updated.status == "closed"
+    fetched_closed = await database.session_state.get_by_identity("Niyomilan", "whatsapp", "9845891194")
+    assert fetched_closed is not None
+    assert fetched_closed.status == "closed"
 
     reopened = await database.session_state.update_by_id(
         created.id,
