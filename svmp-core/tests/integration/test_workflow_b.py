@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -347,7 +348,20 @@ async def test_workflow_b_can_use_openai_matcher_authoritatively(
     """When enabled, the OpenAI matcher should become the authoritative scorer."""
 
     async def fake_generate_completion(**kwargs) -> str:
-        return '{"bestIndex": 0, "similarityScore": 0.92, "reason": "candidate 0 directly answers the query"}'
+        payload = json.loads(kwargs["user_prompt"])
+        candidates = payload["candidates"]
+        selected_index = next(
+            index
+            for index, candidate in enumerate(candidates)
+            if candidate["question"] == "Business opening times"
+        )
+        return json.dumps(
+            {
+                "bestIndex": selected_index,
+                "similarityScore": 0.92,
+                "reason": "business hours candidate directly answers the query",
+            }
+        )
 
     monkeypatch.setattr(
         "svmp_core.workflows.workflow_b.generate_completion",
