@@ -289,3 +289,18 @@ async def test_demo_smoke_ingest_then_process_writes_governance_log(
         assert written_logs[0].answer_supplied == "We help customers."
         assert written_logs[0].metadata["matcherUsed"] == "openai"
         assert written_logs[0].metadata["delivery"]["provider"] == "normalized"
+        assert written_logs[0].metadata["workflow"] == "workflow_b"
+        assert written_logs[0].metadata["decision"] == "answered"
+        assert written_logs[0].metadata["sessionId"] == "session-1"
+        assert written_logs[0].metadata["identity"] == {
+            "tenantId": "Niyomilan",
+            "clientId": "whatsapp",
+            "userId": "9845891194",
+        }
+        assert written_logs[0].metadata["similarity"] == {
+            "score": 0.92,
+            "threshold": 0.75,
+            "outcome": "pass",
+            "candidateFound": True,
+        }
+        assert isinstance(written_logs[0].metadata["latencyMs"], int)

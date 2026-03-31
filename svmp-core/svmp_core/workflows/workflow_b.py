@@ -136,8 +136,7 @@ async def _openai_match(
             metadata={"candidatesConsidered": 0},
         )
 
-    candidate_limit = max(1, settings.OPENAI_MATCHER_CANDIDATE_LIMIT)
-    candidates = entries[:candidate_limit]
+    candidates = list(entries)
     candidate_payload = [
         {
             "index": index,
@@ -400,7 +399,13 @@ async def run_workflow_b(
             log = build_escalated_log(
                 identity,
                 combined_text,
-                metadata={"reason": "domain_unresolved", "target": escalation.target.value},
+                metadata={
+                    "reason": "domain_unresolved",
+                    "target": escalation.target.value,
+                    "recentMessages": conversation.recent_messages,
+                    "recentText": conversation.recent_text,
+                    "context": conversation.context,
+                },
                 timestamp=current_time,
             )
             await database.governance_logs.create(log)
