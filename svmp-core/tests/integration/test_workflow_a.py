@@ -157,6 +157,7 @@ async def test_workflow_a_creates_a_new_session_for_first_message() -> None:
     assert session.created_at == now
     assert session.updated_at == now
     assert session.debounce_expires_at == now + timedelta(milliseconds=2500)
+    assert session.provider == "normalized"
     assert session.processing is False
     assert session.provider == "normalized"
 
@@ -207,6 +208,7 @@ async def test_workflow_a_appends_follow_up_message_and_resets_debounce() -> Non
     assert updated.created_at == first_now
     assert updated.updated_at == second_now
     assert updated.debounce_expires_at == second_now + timedelta(milliseconds=2500)
+    assert updated.provider == "normalized"
     assert updated.status == "open"
     assert updated.processing is False
 
@@ -252,6 +254,7 @@ async def test_workflow_a_reopens_existing_identity_session_when_new_input_arriv
     )
 
     assert reopened.id == session.id
+    assert reopened.provider == "normalized"
     assert reopened.status == "open"
     assert reopened.processing is False
     assert reopened.messages[-1].text == "what do you do?"
@@ -335,6 +338,7 @@ async def test_workflow_a_reuses_legacy_closed_session_for_same_identity() -> No
     )
 
     assert updated.id == first_session.id
+    assert updated.provider == "normalized"
     assert updated.status == "open"
     assert updated.processing is False
     assert [message.text for message in updated.messages] == ["hi", "back again"]

@@ -407,3 +407,56 @@ async def test_workflow_b_routes_answer_through_session_provider(
     assert captured["message"].client_id == "whatsapp"
     assert captured["message"].user_id == "9845891194"
     assert captured["message"].text == "We help customers."
+
+
+@pytest.mark.asyncio
+async def test_workflow_b_uses_session_provider_for_outbound_routing() -> None:
+    """Outbound replies should follow the session provider, not just the global default."""
+
+    captured: dict[str, Any] = {}
+
+    class FakeProvider:
+        name = "twilio"
+
+        async def send_text(self, message, *, settings):
+            captured["message"] = message
+            captured["provider"] = settings.WHATSAPP_PROVIDER
+            return OutboundSendResult(
+                provider="twilio",
+                accepted=True,
+                status="accepted",
+                externalMessageId="SM321",
+            )
+
+    database = ProcessingDatabase(
+        sessions=[_ready_session(text="What do you do?", provider="twilio")],
+        knowledge_entries=[
+            KnowledgeEntry(
+                _id="faq-1",
+                tenantId="Niyomilan",
+                domainId="general",
+                question="What do you do?",
+                answer="We help customers.",
+            )
+        ],
+        tenants=[_tenant(threshold=0.75)],
+    )
+
+    monkeypatch = pytest.MonkeyPatch()
+    def fake_get_whatsapp_provider(**kwargs):
+        captured["requested_provider"] = kwargs["requested_provider"]
+        return FakeProvider()
+
+    monkeypatch.setattr("svmp_core.workflows.workflow_b.get_whatsapp_provider", fake_get_whatsapp_provider)
+    try:
+        result = await run_workflow_b(
+            database,
+            settings=Settings(_env_file=None, SIMILARITY_THRESHOLD=0.75, WHATSAPP_PROVIDER="meta"),
+            now=datetime(2026, 3, 30, 10, 0, tzinfo=timezone.utc),
+        )
+    finally:
+        monkeypatch.undo()
+
+    assert captured["requested_provider"] == "twilio"
+    assert result.outbound_send_result is not None
+    assert result.outbound_send_result.provider == "twilio"
