@@ -304,13 +304,14 @@ async def _send_answer_reply(
     identity: IdentityFrame,
     answer_text: str,
     *,
+    provider_name: str | None,
     settings: Settings,
 ) -> OutboundSendResult:
     """Send an answered response back through the active WhatsApp provider."""
 
     provider = get_whatsapp_provider(
         settings=settings,
-        requested_provider=settings.WHATSAPP_PROVIDER,
+        requested_provider=provider_name or settings.WHATSAPP_PROVIDER,
     )
     return await provider.send_text(
         OutboundTextMessage(
@@ -503,6 +504,7 @@ async def run_workflow_b(
             send_result = await _send_answer_reply(
                 identity,
                 authoritative_match.entry.answer,
+                provider_name=acquired_session.provider,
                 settings=runtime_settings,
             )
             log = build_answered_log(
