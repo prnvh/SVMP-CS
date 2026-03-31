@@ -87,6 +87,29 @@ class StubTenantRepository(TenantRepository):
     async def get_by_tenant_id(self, tenant_id: str) -> Mapping[str, Any] | None:
         return None
 
+    async def resolve_tenant_id_for_provider(
+        self,
+        *,
+        provider: str,
+        identities,
+    ) -> str | None:
+        mappings = {
+            "meta": {
+                "1234567890": "Niyomilan",
+                "+15551234567": "Niyomilan",
+            },
+            "twilio": {
+                "whatsapp:+14155238886": "Niyomilan",
+                "AC123": "Niyomilan",
+            },
+        }
+        provider_mappings = mappings.get(provider, {})
+        for identity in identities:
+            tenant_id = provider_mappings.get(identity)
+            if tenant_id is not None:
+                return tenant_id
+        return None
+
 
 class InMemoryDatabase(Database):
     """Small database wrapper for webhook route tests."""
@@ -130,18 +153,19 @@ def _settings() -> Settings:
     )
 
 
-def _build_client() -> TestClient:
+def _build_client(*, database: InMemoryDatabase | None = None) -> tuple[TestClient, InMemoryDatabase]:
     """Build a FastAPI test app with the webhook router attached."""
 
+    runtime_database = database or InMemoryDatabase()
     app = FastAPI()
-    app.include_router(build_webhook_router(InMemoryDatabase(), settings=_settings()))
-    return TestClient(app)
+    app.include_router(build_webhook_router(runtime_database, settings=_settings()))
+    return TestClient(app), runtime_database
 
 
 def test_webhook_get_verification_returns_challenge() -> None:
     """GET verification should echo the challenge when the token matches."""
 
-    client = _build_client()
+    client, _ = _build_client()
 
     response = client.get(
         "/webhook",
@@ -159,7 +183,7 @@ def test_webhook_get_verification_returns_challenge() -> None:
 def test_webhook_post_intakes_valid_payload() -> None:
     """POST webhook intake should accept already-normalized payloads."""
 
-    client = _build_client()
+    client, _ = _build_client()
 
     response = client.post(
         "/webhook",
@@ -174,17 +198,14 @@ def test_webhook_post_intakes_valid_payload() -> None:
     assert response.status_code == 200
     assert response.json() == {
         "status": "accepted",
-        "provider": "normalized",
-        "messageCount": 1,
         "sessionId": "session-1",
-        "sessionIds": ["session-1"],
     }
 
 
 def test_webhook_post_rejects_malformed_payload() -> None:
     """Malformed normalized payloads should fail validation at the route boundary."""
 
-    client = _build_client()
+    client, _ = _build_client()
 
     response = client.post(
         "/webhook",
@@ -202,11 +223,11 @@ def test_webhook_post_rejects_malformed_payload() -> None:
 def test_webhook_post_normalizes_meta_payload() -> None:
     """Meta webhook JSON should normalize into the internal inbound schema."""
 
-    client = _build_client()
+    client, database = _build_client()
 
     response = client.post(
         "/webhook",
-        headers={"X-SVMP-Tenant-Id": "Niyomilan", "X-SVMP-Provider": "meta"},
+        headers={"X-SVMP-Provider": "meta"},
         json={
             "object": "whatsapp_business_account",
             "entry": [
@@ -214,6 +235,10 @@ def test_webhook_post_normalizes_meta_payload() -> None:
                     "changes": [
                         {
                             "value": {
+                                "metadata": {
+                                    "phone_number_id": "1234567890",
+                                    "display_phone_number": "+15551234567",
+                                },
                                 "messages": [
                                     {
                                         "id": "wamid.HBgM123",
@@ -235,17 +260,22 @@ def test_webhook_post_normalizes_meta_payload() -> None:
         "sessionId": "session-1",
     }
 
+    session = database._session_state._sessions["session-1"]
+    assert session.provider == "meta"
+
 
 def test_webhook_post_normalizes_twilio_form_payload() -> None:
     """Twilio form posts should normalize into the internal inbound schema."""
 
-    client = _build_client()
+    client, database = _build_client()
 
     response = client.post(
         "/webhook",
-        headers={"X-SVMP-Tenant-Id": "Niyomilan", "X-SVMP-Provider": "twilio"},
+        headers={"X-SVMP-Provider": "twilio"},
         data={
             "MessageSid": "SM123",
+            "AccountSid": "AC123",
+            "To": "whatsapp:+14155238886",
             "From": "whatsapp:+919845891194",
             "Body": "hello from twilio",
         },
@@ -257,30 +287,35 @@ def test_webhook_post_normalizes_twilio_form_payload() -> None:
         "sessionId": "session-1",
     }
 
+    session = database._session_state._sessions["session-1"]
+    assert session.provider == "twilio"
 
-def test_webhook_post_rejects_provider_payload_without_tenant() -> None:
-    """Provider-native payloads should require an explicit tenant identity."""
 
-    client = _build_client()
+def test_webhook_post_rejects_provider_payload_without_resolvable_tenant() -> None:
+    """Provider-native payloads should fail cleanly when no tenant mapping can be resolved."""
+
+    client, _ = _build_client()
 
     response = client.post(
         "/webhook",
         headers={"X-SVMP-Provider": "twilio"},
         data={
             "MessageSid": "SM123",
+            "AccountSid": "AC999",
+            "To": "whatsapp:+19999999999",
             "From": "whatsapp:+919845891194",
             "Body": "hello from twilio",
         },
     )
 
     assert response.status_code == 400
-    assert response.json() == {"detail": "tenantId is required"}
+    assert response.json() == {"detail": "tenantId could not be resolved from provider payload"}
 
 
 def test_webhook_get_returns_405_for_twilio_provider() -> None:
     """GET verification should only work for providers that support it."""
 
-    client = _build_client()
+    client, _ = _build_client()
 
     response = client.get(
         "/webhook",
