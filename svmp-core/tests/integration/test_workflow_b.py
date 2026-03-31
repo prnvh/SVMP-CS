@@ -251,6 +251,23 @@ async def test_workflow_b_answers_high_confidence_informational_query(
     assert written_logs[0].decision == GovernanceDecision.ANSWERED
     assert written_logs[0].metadata["matcherUsed"] == "openai"
     assert written_logs[0].metadata["delivery"]["provider"] == "normalized"
+    assert written_logs[0].metadata["workflow"] == "workflow_b"
+    assert written_logs[0].metadata["decision"] == "answered"
+    assert written_logs[0].metadata["decisionReason"] == "score meets or exceeds threshold"
+    assert written_logs[0].metadata["sessionId"] == "session-ready-1"
+    assert written_logs[0].metadata["provider"] is None
+    assert written_logs[0].metadata["identity"] == {
+        "tenantId": "Niyomilan",
+        "clientId": "whatsapp",
+        "userId": "9845891194",
+    }
+    assert written_logs[0].metadata["similarity"] == {
+        "score": 0.92,
+        "threshold": 0.75,
+        "outcome": "pass",
+        "candidateFound": True,
+    }
+    assert isinstance(written_logs[0].metadata["latencyMs"], int)
 
     session = await database.session_state.get_by_identity("Niyomilan", "whatsapp", "9845891194")
     assert session is not None
@@ -300,6 +317,17 @@ async def test_workflow_b_escalates_low_confidence_query(
     assert len(written_logs) == 1
     assert written_logs[0].decision == GovernanceDecision.ESCALATED
     assert written_logs[0].metadata["matcherUsed"] == "openai"
+    assert written_logs[0].metadata["workflow"] == "workflow_b"
+    assert written_logs[0].metadata["decision"] == "escalated"
+    assert written_logs[0].metadata["decisionReason"] == "score below threshold"
+    assert written_logs[0].metadata["similarity"] == {
+        "score": 0.21,
+        "threshold": 0.75,
+        "outcome": "fail",
+        "candidateFound": True,
+    }
+    assert written_logs[0].metadata["target"] == "human_review"
+    assert isinstance(written_logs[0].metadata["latencyMs"], int)
 
 
 @pytest.mark.asyncio
@@ -415,6 +443,9 @@ async def test_workflow_b_uses_session_provider_for_outbound_routing() -> None:
 
     captured: dict[str, Any] = {}
 
+    async def fake_generate_completion(**kwargs) -> str:
+        return '{"bestIndex": 0, "similarityScore": 0.92, "reason": "candidate 0 directly answers the query"}'
+
     class FakeProvider:
         name = "twilio"
 
@@ -447,6 +478,7 @@ async def test_workflow_b_uses_session_provider_for_outbound_routing() -> None:
         captured["requested_provider"] = kwargs["requested_provider"]
         return FakeProvider()
 
+    monkeypatch.setattr("svmp_core.workflows.workflow_b.generate_completion", fake_generate_completion)
     monkeypatch.setattr("svmp_core.workflows.workflow_b.get_whatsapp_provider", fake_get_whatsapp_provider)
     try:
         result = await run_workflow_b(
