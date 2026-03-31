@@ -29,7 +29,7 @@ def test_sample_tenant_seed_file_parses_into_document() -> None:
 
     tenant_document = module.load_tenant_document(sample_file)
 
-    assert tenant_document["tenantId"] == "Niyomilan"
+    assert tenant_document["tenantId"] == "Stay"
     assert tenant_document["settings"]["confidenceThreshold"] == 0.75
     assert tenant_document["domains"][0]["domainId"] == "general"
     assert tenant_document["channels"]["twilio"]["whatsappNumbers"] == ["whatsapp:+14155238886"]
@@ -44,7 +44,7 @@ async def test_seed_tenant_from_file_uses_writer_upsert_path(tmp_path: Path) -> 
     seed_file.write_text(
         (
             "{"
-            '"tenantId": "Niyomilan",'
+            '"tenantId": "Stay",'
             '"domains": [{"domainId": "general", "name": "General", "description": "General help"}],'
             '"channels": {"twilio": {"whatsappNumbers": ["whatsapp:+14155238886"]}},'
             '"settings": {"confidenceThreshold": 0.8},'
@@ -68,6 +68,68 @@ async def test_seed_tenant_from_file_uses_writer_upsert_path(tmp_path: Path) -> 
 
     assert written == 1
     assert writer.document is not None
-    assert writer.document["tenantId"] == "Niyomilan"
+    assert writer.document["tenantId"] == "Stay"
     assert writer.document["channels"]["twilio"]["whatsappNumbers"] == ["whatsapp:+14155238886"]
     assert writer.document["settings"]["confidenceThreshold"] == 0.8
+
+
+@pytest.mark.asyncio
+async def test_mongo_tenant_writer_clears_conflicting_channel_mappings() -> None:
+    """The Mongo tenant writer should remove matching channel identifiers from other tenants first."""
+
+    module = _load_seed_module()
+
+    class FakeCollection:
+        def __init__(self) -> None:
+            self.updated: list[tuple[dict, dict]] = []
+            self.replaced: list[tuple[dict, dict, bool]] = []
+
+        async def update_many(self, filter_doc: dict, update_doc: dict) -> None:
+            self.updated.append((dict(filter_doc), dict(update_doc)))
+
+        async def replace_one(self, filter_doc: dict, payload: dict, upsert: bool) -> None:
+            self.replaced.append((dict(filter_doc), dict(payload), upsert))
+
+    collection = FakeCollection()
+    writer = module.MongoTenantSeedWriter(collection)
+
+    written = await writer.upsert_tenant(
+        {
+            "tenantId": "Stay",
+            "domains": [{"domainId": "general", "name": "General", "description": "General help"}],
+            "channels": {
+                "twilio": {
+                    "whatsappNumbers": ["whatsapp:+14155238886"],
+                    "accountSids": ["AC123"],
+                }
+            },
+        }
+    )
+
+    assert written == 1
+    assert collection.updated == [
+        (
+            {"tenantId": {"$ne": "Stay"}},
+            {"$pull": {"channels.twilio.whatsappNumbers": {"$in": ["whatsapp:+14155238886"]}}},
+        ),
+        (
+            {"tenantId": {"$ne": "Stay"}},
+            {"$pull": {"channels.twilio.accountSids": {"$in": ["AC123"]}}},
+        ),
+    ]
+    assert collection.replaced == [
+        (
+            {"tenantId": "Stay"},
+            {
+                "tenantId": "Stay",
+                "domains": [{"domainId": "general", "name": "General", "description": "General help"}],
+                "channels": {
+                    "twilio": {
+                        "whatsappNumbers": ["whatsapp:+14155238886"],
+                        "accountSids": ["AC123"],
+                    }
+                },
+            },
+            True,
+        )
+    ]

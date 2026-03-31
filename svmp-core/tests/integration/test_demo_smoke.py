@@ -279,6 +279,8 @@ async def test_demo_smoke_ingest_then_process_writes_governance_log(
         assert session is not None
         assert session.status == "open"
         assert session.processing is True
+        assert session.messages == []
+        assert session.context == ["What do you do?"]
 
         written_logs = database.governance_logs.logs
         assert len(written_logs) == 1

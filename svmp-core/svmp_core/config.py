@@ -50,7 +50,7 @@ class Settings(BaseSettings):
 
     OPENAI_API_KEY: SecretStr | None = None
     EMBEDDING_MODEL: str = "text-embedding-3-small"
-    LLM_MODEL: str = "gpt-4o-mini"
+    LLM_MODEL: str = "gpt-4.1"
     USE_OPENAI_MATCHER: bool = False
     OPENAI_SHADOW_MODE: bool = False
     OPENAI_MATCHER_CANDIDATE_LIMIT: int = 8
