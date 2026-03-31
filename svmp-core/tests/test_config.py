@@ -25,7 +25,7 @@ def test_settings_defaults_load() -> None:
     assert loaded.WORKFLOW_B_INTERVAL_SECONDS == 1
     assert loaded.WORKFLOW_C_INTERVAL_HOURS == 24
     assert loaded.EMBEDDING_MODEL == "text-embedding-3-small"
-    assert loaded.LLM_MODEL == "gpt-4o-mini"
+    assert loaded.LLM_MODEL == "gpt-4.1"
     assert loaded.USE_OPENAI_MATCHER is False
     assert loaded.OPENAI_SHADOW_MODE is False
     assert loaded.OPENAI_MATCHER_CANDIDATE_LIMIT == 8

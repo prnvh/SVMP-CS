@@ -172,8 +172,18 @@ def _settings() -> Settings:
     )
 
 
-def _ready_session(*, text: str, provider: str | None = None) -> SessionState:
+def _ready_session(
+    *,
+    text: str | None = None,
+    texts: list[str] | None = None,
+    provider: str | None = None,
+    context: list[str] | None = None,
+) -> SessionState:
     """Build a ready-to-process session state."""
+
+    message_texts = texts or ([text] if text is not None else None)
+    if not message_texts:
+        raise ValueError("expected at least one message text")
 
     return SessionState(
         _id="session-ready-1",
@@ -182,7 +192,14 @@ def _ready_session(*, text: str, provider: str | None = None) -> SessionState:
         userId="9845891194",
         provider=provider,
         processing=False,
-        messages=[MessageItem(text=text, at=datetime(2026, 3, 30, 9, 55, tzinfo=timezone.utc))],
+        context=list(context or []),
+        messages=[
+            MessageItem(
+                text=message_text,
+                at=datetime(2026, 3, 30, 9, 55 + index, tzinfo=timezone.utc),
+            )
+            for index, message_text in enumerate(message_texts)
+        ],
         createdAt=datetime(2026, 3, 30, 9, 55, tzinfo=timezone.utc),
         updatedAt=datetime(2026, 3, 30, 9, 55, tzinfo=timezone.utc),
         debounceExpiresAt=datetime(2026, 3, 30, 9, 59, tzinfo=timezone.utc),
@@ -256,6 +273,8 @@ async def test_workflow_b_answers_high_confidence_informational_query(
     assert session is not None
     assert session.status == "open"
     assert session.processing is True
+    assert session.messages == []
+    assert session.context == ["What do you do?"]
 
 
 @pytest.mark.asyncio
@@ -300,6 +319,227 @@ async def test_workflow_b_escalates_low_confidence_query(
     assert len(written_logs) == 1
     assert written_logs[0].decision == GovernanceDecision.ESCALATED
     assert written_logs[0].metadata["matcherUsed"] == "openai"
+
+
+@pytest.mark.asyncio
+async def test_workflow_b_normalizes_percentage_style_similarity_scores(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Percentage-style scores from the model should normalize into 0-1 similarity values."""
+
+    async def fake_generate_completion(**kwargs) -> str:
+        return '{"bestIndex": 0, "similarityScore": 92, "reason": "candidate 0 directly answers the query"}'
+
+    monkeypatch.setattr("svmp_core.workflows.workflow_b.generate_completion", fake_generate_completion)
+
+    database = ProcessingDatabase(
+        sessions=[_ready_session(text="What do you do?")],
+        knowledge_entries=[
+            KnowledgeEntry(
+                _id="faq-1",
+                tenantId="Niyomilan",
+                domainId="general",
+                question="What do you do?",
+                answer="We help customers.",
+            )
+        ],
+        tenants=[_tenant(threshold=0.75)],
+    )
+
+    result = await run_workflow_b(
+        database,
+        settings=_settings(),
+        now=datetime(2026, 3, 30, 10, 0, tzinfo=timezone.utc),
+    )
+
+    assert result.decision == GovernanceDecision.ANSWERED
+    assert result.similarity_score == pytest.approx(0.92)
+
+
+@pytest.mark.asyncio
+async def test_workflow_b_prompt_prioritizes_last_coherent_sentence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Matcher prompt should separate older context and let the model infer the latest sentence."""
+
+    captured: dict[str, Any] = {}
+
+    async def fake_generate_completion(**kwargs) -> str:
+        captured["system_prompt"] = kwargs["system_prompt"]
+        captured["user_prompt"] = kwargs["user_prompt"]
+        return '{"bestIndex": 0, "similarityScore": 0.92, "reason": "candidate 0 directly answers the query"}'
+
+    monkeypatch.setattr("svmp_core.workflows.workflow_b.generate_completion", fake_generate_completion)
+
+    database = ProcessingDatabase(
+        sessions=[
+            _ready_session(
+                texts=[
+                    "What does Niyomilan do?",
+                    "What is it trying to solve?",
+                    "Why is it called Niyomilan?",
+                ],
+                context=["Hi there"],
+            )
+        ],
+        knowledge_entries=[
+            KnowledgeEntry(
+                _id="faq-1",
+                tenantId="Niyomilan",
+                domainId="general",
+                question="Why is it called Niyomilan?",
+                answer="It comes from Sanskrit roots describing connection and purposeful engagement.",
+            )
+        ],
+        tenants=[_tenant(threshold=0.75)],
+    )
+
+    await run_workflow_b(
+        database,
+        settings=_settings(),
+        now=datetime(2026, 3, 30, 10, 0, tzinfo=timezone.utc),
+    )
+
+    assert "recentMessages as the full current debounce window" in captured["system_prompt"]
+    assert "recentMessages as the full current debounce window" in captured["system_prompt"]
+    assert "recentMessages contains only the customer messages collected in the current debounce window" in captured["system_prompt"]
+    assert "context contains text from previous processed windows" in captured["system_prompt"]
+    assert "Infer the LAST COHERENT SENTENCE or question from recentMessages" in captured["system_prompt"]
+    assert '"recentMessages": ["What does Niyomilan do?", "What is it trying to solve?", "Why is it called Niyomilan?"]' in captured["user_prompt"]
+    assert '"context": "Hi there"' in captured["user_prompt"]
+    assert '"recentText": "What does Niyomilan do? What is it trying to solve? Why is it called Niyomilan?"' in captured["user_prompt"]
+    assert '"coreRule": "Use the last coherent sentence or question from recentMessages as the authoritative ask. recentMessages is the current debounce window only. context is previous processed history only and must not override it."' in captured["user_prompt"]
+
+
+@pytest.mark.asyncio
+async def test_workflow_b_uses_last_sentence_from_recent_window_for_matching(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The model should receive the last three texts untouched plus older context."""
+
+    captured: dict[str, Any] = {}
+
+    async def fake_generate_completion(**kwargs) -> str:
+        captured["user_prompt"] = kwargs["user_prompt"]
+        return '{"bestIndex": 1, "similarityScore": 0.92, "reason": "latest ask matches candidate 1"}'
+
+    monkeypatch.setattr("svmp_core.workflows.workflow_b.generate_completion", fake_generate_completion)
+
+    database = ProcessingDatabase(
+        sessions=[
+            _ready_session(
+                texts=[
+                    "What does Niyomilan do?",
+                    "What is it trying to solve?",
+                    "Why is it called Niyomilan?",
+                ],
+                context=["Older topic that should become context"],
+            )
+        ],
+        knowledge_entries=[
+            KnowledgeEntry(
+                _id="faq-1",
+                tenantId="Niyomilan",
+                domainId="general",
+                question="What does Niyomilan do?",
+                answer="We help customers.",
+            ),
+            KnowledgeEntry(
+                _id="faq-2",
+                tenantId="Niyomilan",
+                domainId="general",
+                question="Why is it called Niyomilan?",
+                answer="It comes from Sanskrit roots describing connection and purposeful engagement.",
+            ),
+        ],
+        tenants=[_tenant(threshold=0.75)],
+    )
+
+    result = await run_workflow_b(
+        database,
+        settings=_settings(),
+        now=datetime(2026, 3, 30, 10, 0, tzinfo=timezone.utc),
+    )
+
+    assert result.decision == GovernanceDecision.ANSWERED
+    assert result.answer_supplied == "It comes from Sanskrit roots describing connection and purposeful engagement."
+    assert '"recentMessages": ["What does Niyomilan do?", "What is it trying to solve?", "Why is it called Niyomilan?"]' in captured["user_prompt"]
+    assert '"recentText": "What does Niyomilan do? What is it trying to solve? Why is it called Niyomilan?"' in captured["user_prompt"]
+    assert '"context": "Older topic that should become context"' in captured["user_prompt"]
+
+    session = await database.session_state.get_by_identity("Niyomilan", "whatsapp", "9845891194")
+    assert session is not None
+    assert session.messages == []
+    assert session.context == [
+        "Older topic that should become context",
+        "What does Niyomilan do? What is it trying to solve? Why is it called Niyomilan?",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_workflow_b_preserves_new_messages_that_arrive_during_processing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Archiving the processed window should not wipe newer inbound messages."""
+
+    async def fake_generate_completion(**kwargs) -> str:
+        return '{"bestIndex": 0, "similarityScore": 0.92, "reason": "candidate 0 directly answers the query"}'
+
+    monkeypatch.setattr("svmp_core.workflows.workflow_b.generate_completion", fake_generate_completion)
+
+    database = ProcessingDatabase(
+        sessions=[_ready_session(text="What size are Stay bottles?")],
+        knowledge_entries=[
+            KnowledgeEntry(
+                _id="faq-1",
+                tenantId="Niyomilan",
+                domainId="general",
+                question="What size are Stay bottles?",
+                answer="Most bottles are 100 mL.",
+            )
+        ],
+        tenants=[_tenant(threshold=0.75)],
+    )
+
+    async def fake_send_answer_reply(identity, answer_text, *, provider_name, settings):
+        seeded = await database.session_state.get_by_identity("Niyomilan", "whatsapp", "9845891194")
+        assert seeded is not None
+        assert seeded.id is not None
+        updated = await database.session_state.update_by_id(
+            seeded.id,
+            {
+                "messages": [
+                    *seeded.messages,
+                    MessageItem(text="Do you offer free shipping?", at=datetime(2026, 3, 30, 10, 0, 1, tzinfo=timezone.utc)),
+                ],
+                "updated_at": datetime(2026, 3, 30, 10, 0, 1, tzinfo=timezone.utc),
+                "debounce_expires_at": datetime(2026, 3, 30, 10, 0, 3, tzinfo=timezone.utc),
+                "processing": False,
+            },
+        )
+        assert updated is not None
+        return OutboundSendResult(
+            provider="normalized",
+            accepted=True,
+            status="accepted",
+            externalMessageId="SM123",
+        )
+
+    monkeypatch.setattr("svmp_core.workflows.workflow_b._send_answer_reply", fake_send_answer_reply)
+
+    result = await run_workflow_b(
+        database,
+        settings=_settings(),
+        now=datetime(2026, 3, 30, 10, 0, tzinfo=timezone.utc),
+    )
+
+    assert result.decision == GovernanceDecision.ANSWERED
+
+    session = await database.session_state.get_by_identity("Niyomilan", "whatsapp", "9845891194")
+    assert session is not None
+    assert [message.text for message in session.messages] == ["Do you offer free shipping?"]
+    assert session.context == ["What size are Stay bottles?"]
+    assert session.processing is False
 
 
 @pytest.mark.asyncio
@@ -415,6 +655,9 @@ async def test_workflow_b_uses_session_provider_for_outbound_routing() -> None:
 
     captured: dict[str, Any] = {}
 
+    async def fake_generate_completion(**kwargs) -> str:
+        return '{"bestIndex": 0, "similarityScore": 0.92, "reason": "candidate 0 directly answers the query"}'
+
     class FakeProvider:
         name = "twilio"
 
@@ -447,6 +690,7 @@ async def test_workflow_b_uses_session_provider_for_outbound_routing() -> None:
         captured["requested_provider"] = kwargs["requested_provider"]
         return FakeProvider()
 
+    monkeypatch.setattr("svmp_core.workflows.workflow_b.generate_completion", fake_generate_completion)
     monkeypatch.setattr("svmp_core.workflows.workflow_b.get_whatsapp_provider", fake_get_whatsapp_provider)
     try:
         result = await run_workflow_b(

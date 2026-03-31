@@ -29,10 +29,10 @@ def test_sample_seed_file_parses_into_knowledge_entries() -> None:
 
     entries = module.load_seed_entries(sample_file)
 
-    assert len(entries) == 3
-    assert entries[0].tenant_id == "Niyomilan"
+    assert len(entries) == 10
+    assert entries[0].tenant_id == "Stay"
     assert entries[0].domain_id == "general"
-    assert entries[0].id == "faq-about-company"
+    assert entries[0].id == "faq-bottle-size"
 
 
 def test_seed_transform_applies_top_level_tenant_to_all_entries(tmp_path: Path) -> None:
@@ -43,7 +43,7 @@ def test_seed_transform_applies_top_level_tenant_to_all_entries(tmp_path: Path) 
     seed_file.write_text(
         (
             '{'
-            '"tenantId": "Niyomilan",'
+            '"tenantId": "Stay",'
             '"entries": ['
             '{"domainId": "sales", "question": "Pricing?", "answer": "Contact sales.", "tags": ["sales"]}'
             "]}"
@@ -54,7 +54,7 @@ def test_seed_transform_applies_top_level_tenant_to_all_entries(tmp_path: Path) 
     entries = module.load_seed_entries(seed_file)
 
     assert len(entries) == 1
-    assert entries[0].tenant_id == "Niyomilan"
+    assert entries[0].tenant_id == "Stay"
     assert entries[0].domain_id == "sales"
     assert entries[0].question == "Pricing?"
     assert entries[0].id is None
@@ -69,7 +69,7 @@ async def test_seed_entries_from_file_uses_writer_upsert_path(tmp_path: Path) ->
     seed_file.write_text(
         (
             '{'
-            '"tenantId": "Niyomilan",'
+            '"tenantId": "Stay",'
             '"entries": ['
             '{"_id": "faq-1", "domainId": "general", "question": "What do you do?", "answer": "We help customers."}'
             "]}"
@@ -92,7 +92,7 @@ async def test_seed_entries_from_file_uses_writer_upsert_path(tmp_path: Path) ->
     assert written == 1
     assert writer.entries is not None
     assert writer.entries[0].id == "faq-1"
-    assert writer.entries[0].tenant_id == "Niyomilan"
+    assert writer.entries[0].tenant_id == "Stay"
 
 
 @pytest.mark.asyncio
