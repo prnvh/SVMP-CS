@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from time import perf_counter
 from typing import Any
 
 from svmp_core.config import Settings, get_settings, get_tenant_confidence_threshold
@@ -60,6 +62,14 @@ class ConversationView:
     recent_messages: list[str]
     context: str
     recent_text: str
+
+
+@dataclass(frozen=True)
+class TypingIndicatorAttempt:
+    """Resolved typing-indicator target information for one processing run."""
+
+    provider_name: str
+    inbound_message_id: str | None
 
 
 def _build_conversation_view(session: SessionState) -> ConversationView:
@@ -166,8 +176,6 @@ async def _openai_match(
             {
                 "recentMessages": conversation.recent_messages,
                 "context": conversation.context,
-                "recentText": conversation.recent_text,
-                "combinedText": conversation.combined_text,
                 "coreRule": "Use the last coherent sentence or question from recentMessages as the authoritative ask. recentMessages is the current debounce window only. context is previous processed history only and must not override it.",
                 "candidates": candidate_payload,
             },
@@ -215,6 +223,46 @@ def _matcher_metadata(result: MatcherResult) -> dict[str, Any]:
         "matcherReason": result.reason,
         **result.metadata,
     }
+
+
+def _audit_metadata(
+    *,
+    identity: IdentityFrame,
+    session: SessionState,
+    decision: str,
+    latency_ms: int,
+    reason: str,
+    provider_name: str | None,
+    threshold: float | None,
+    similarity_score: float | None,
+    similarity_outcome: str,
+    candidate_found: bool,
+    extra: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build consistent governance metadata for Workflow B decisions."""
+
+    metadata: dict[str, Any] = {
+        "workflow": "workflow_b",
+        "decision": decision,
+        "decisionReason": reason,
+        "latencyMs": latency_ms,
+        "sessionId": session.id,
+        "provider": provider_name,
+        "identity": {
+            "tenantId": identity.tenant_id,
+            "clientId": identity.client_id,
+            "userId": identity.user_id,
+        },
+        "similarity": {
+            "score": similarity_score,
+            "threshold": threshold,
+            "outcome": similarity_outcome,
+            "candidateFound": candidate_found,
+        },
+    }
+    if extra:
+        metadata.update(dict(extra))
+    return metadata
 
 
 async def _archive_processed_window(
@@ -313,7 +361,7 @@ async def _send_answer_reply(
 
 
 async def _send_typing_indicator(
-    session: SessionState,
+    attempt: TypingIndicatorAttempt,
     *,
     settings: Settings,
 ) -> None:
@@ -321,17 +369,94 @@ async def _send_typing_indicator(
 
     provider = get_whatsapp_provider(
         settings=settings,
-        requested_provider=session.provider or settings.WHATSAPP_PROVIDER,
+        requested_provider=attempt.provider_name,
     )
+    await provider.send_typing_indicator(
+        inbound_message_id=attempt.inbound_message_id,
+        settings=settings,
+    )
+
+
+def _prepare_typing_indicator_attempt(
+    session: SessionState,
+    *,
+    settings: Settings,
+) -> TypingIndicatorAttempt:
+    """Resolve the provider and latest inbound message id for typing UX."""
+
     inbound_message_id = None
     for message in reversed(session.messages):
         if message.external_message_id is not None and message.external_message_id.strip():
             inbound_message_id = message.external_message_id.strip()
             break
-    await provider.send_typing_indicator(
+
+    return TypingIndicatorAttempt(
+        provider_name=session.provider or settings.WHATSAPP_PROVIDER,
         inbound_message_id=inbound_message_id,
-        settings=settings,
     )
+
+
+def _typing_metadata_base(attempt: TypingIndicatorAttempt) -> dict[str, Any]:
+    """Return base audit metadata for a typing-indicator attempt."""
+
+    attempted = attempt.inbound_message_id is not None
+    return {
+        "typingIndicatorAttempted": attempted,
+        "typingIndicatorProvider": attempt.provider_name,
+        "typingIndicatorMessageId": attempt.inbound_message_id,
+    }
+
+
+async def _send_typing_indicator_safely(
+    attempt: TypingIndicatorAttempt,
+    *,
+    settings: Settings,
+) -> dict[str, Any]:
+    """Send typing indicator without letting provider failures affect the workflow."""
+
+    base_metadata = _typing_metadata_base(attempt)
+    if not base_metadata["typingIndicatorAttempted"]:
+        return {
+            **base_metadata,
+            "typingIndicatorSent": False,
+            "typingIndicatorStatus": "skipped",
+            "typingIndicatorError": None,
+        }
+
+    try:
+        await _send_typing_indicator(attempt, settings=settings)
+    except Exception as exc:
+        return {
+            **base_metadata,
+            "typingIndicatorSent": False,
+            "typingIndicatorStatus": "error",
+            "typingIndicatorError": str(exc),
+        }
+
+    return {
+        **base_metadata,
+        "typingIndicatorSent": True,
+        "typingIndicatorStatus": "sent",
+        "typingIndicatorError": None,
+    }
+
+
+async def _collect_typing_indicator_metadata(
+    task: asyncio.Task[dict[str, Any]],
+    attempt: TypingIndicatorAttempt,
+) -> dict[str, Any]:
+    """Collect typing audit data without blocking the main workflow for long."""
+
+    done, _ = await asyncio.wait({task}, timeout=0.25)
+    if task in done:
+        return task.result()
+
+    return {
+        **_typing_metadata_base(attempt),
+        "typingIndicatorSent": False,
+        "typingIndicatorStatus": "pending",
+        "typingIndicatorError": None,
+    }
 
 
 @dataclass(frozen=True)
@@ -356,15 +481,20 @@ async def run_workflow_b(
     *,
     settings: Settings | None = None,
     now: datetime | None = None,
+    session_id: str | None = None,
 ) -> WorkflowBResult:
     """Process one ready session and choose answer vs escalation."""
 
     runtime_settings = settings or get_settings()
     current_time = now or _utcnow()
+    started_at = perf_counter()
     acquired_session: SessionState | None = None
 
     try:
-        acquired_session = await database.session_state.acquire_ready_session(current_time)
+        if session_id is None:
+            acquired_session = await database.session_state.acquire_ready_session(current_time)
+        else:
+            acquired_session = await database.session_state.acquire_ready_session_by_id(session_id, current_time)
         if acquired_session is None:
             return WorkflowBResult(
                 processed=False,
@@ -388,10 +518,10 @@ async def run_workflow_b(
             client_id=acquired_session.client_id,
             user_id=acquired_session.user_id,
         )
-        try:
-            await _send_typing_indicator(acquired_session, settings=runtime_settings)
-        except Exception:
-            pass
+        typing_attempt = _prepare_typing_indicator_attempt(acquired_session, settings=runtime_settings)
+        typing_task = asyncio.create_task(
+            _send_typing_indicator_safely(typing_attempt, settings=runtime_settings)
+        )
         conversation = _build_conversation_view(acquired_session)
         combined_text = conversation.combined_text
         if not combined_text:
@@ -422,16 +552,29 @@ async def run_workflow_b(
                 combined_text,
                 reason="domain_unresolved",
             )
+            typing_metadata = await _collect_typing_indicator_metadata(typing_task, typing_attempt)
             log = build_escalated_log(
                 identity,
                 combined_text,
-                metadata={
-                    "reason": "domain_unresolved",
-                    "target": escalation.target.value,
-                    "recentMessages": conversation.recent_messages,
-                    "recentText": conversation.recent_text,
-                    "context": conversation.context,
-                },
+                metadata=_audit_metadata(
+                    identity=identity,
+                    session=acquired_session,
+                    decision=GovernanceDecision.ESCALATED.value,
+                    latency_ms=int((perf_counter() - started_at) * 1000),
+                    reason=escalation.reason,
+                    provider_name=acquired_session.provider,
+                    threshold=threshold,
+                    similarity_score=None,
+                    similarity_outcome="not_evaluated",
+                    candidate_found=False,
+                    extra={
+                        "target": escalation.target.value,
+                        "reason": "domain_unresolved",
+                        "recentMessages": conversation.recent_messages,
+                        "context": conversation.context,
+                        **typing_metadata,
+                    },
+                ),
                 timestamp=current_time,
             )
             await database.governance_logs.create(log)
@@ -481,23 +624,36 @@ async def run_workflow_b(
                 provider_name=acquired_session.provider,
                 settings=runtime_settings,
             )
+            typing_metadata = await _collect_typing_indicator_metadata(typing_task, typing_attempt)
             log = build_answered_log(
                 identity,
                 combined_text,
                 similarity_score=similarity_decision.score or 0.0,
                 answer_supplied=matched_entry.answer,
-                metadata={
-                    "domainId": domain_id,
-                    "recentMessages": conversation.recent_messages,
-                    "recentText": conversation.recent_text,
-                    "context": conversation.context,
-                    **matcher_metadata,
-                    "delivery": {
-                        "provider": send_result.provider,
-                        "status": send_result.status,
-                        "externalMessageId": send_result.external_message_id,
+                metadata=_audit_metadata(
+                    identity=identity,
+                    session=acquired_session,
+                    decision=GovernanceDecision.ANSWERED.value,
+                    latency_ms=int((perf_counter() - started_at) * 1000),
+                    reason=similarity_decision.reason,
+                    provider_name=acquired_session.provider,
+                    threshold=threshold,
+                    similarity_score=similarity_decision.score,
+                    similarity_outcome=similarity_decision.outcome.value,
+                    candidate_found=True,
+                    extra={
+                        "domainId": domain_id,
+                        "recentMessages": conversation.recent_messages,
+                        "context": conversation.context,
+                        **typing_metadata,
+                        **matcher_metadata,
+                        "delivery": {
+                            "provider": send_result.provider,
+                            "status": send_result.status,
+                            "externalMessageId": send_result.external_message_id,
+                        },
                     },
-                },
+                ),
                 timestamp=current_time,
             )
             await database.governance_logs.create(log)
@@ -527,19 +683,32 @@ async def run_workflow_b(
             reason=similarity_decision.reason,
             metadata={"domainId": domain_id},
         )
+        typing_metadata = await _collect_typing_indicator_metadata(typing_task, typing_attempt)
         log = build_escalated_log(
             identity,
             combined_text,
             similarity_score=similarity_decision.score,
-            metadata={
-                "domainId": domain_id,
-                "recentMessages": conversation.recent_messages,
-                "recentText": conversation.recent_text,
-                "context": conversation.context,
-                "reason": similarity_decision.reason,
-                "target": escalation.target.value,
-                **matcher_metadata,
-            },
+            metadata=_audit_metadata(
+                identity=identity,
+                session=acquired_session,
+                decision=GovernanceDecision.ESCALATED.value,
+                latency_ms=int((perf_counter() - started_at) * 1000),
+                reason=similarity_decision.reason,
+                provider_name=acquired_session.provider,
+                threshold=threshold,
+                similarity_score=similarity_decision.score,
+                similarity_outcome=similarity_decision.outcome.value,
+                candidate_found=openai_match.entry is not None,
+                extra={
+                    "domainId": domain_id,
+                    "recentMessages": conversation.recent_messages,
+                    "context": conversation.context,
+                    "reason": similarity_decision.reason,
+                    "target": escalation.target.value,
+                    **typing_metadata,
+                    **matcher_metadata,
+                },
+            ),
             timestamp=current_time,
         )
         await database.governance_logs.create(log)

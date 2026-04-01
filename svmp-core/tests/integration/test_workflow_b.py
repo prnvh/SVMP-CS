@@ -74,6 +74,16 @@ class ProcessingSessionRepository(SessionStateRepository):
         selected.updated_at = now
         return selected.model_copy(deep=True)
 
+    async def acquire_ready_session_by_id(self, session_id: str, now: datetime) -> SessionState | None:
+        session = self._sessions.get(session_id)
+        if session is None:
+            return None
+        if session.status != "open" or session.processing is not False or session.debounce_expires_at > now:
+            return None
+        session.processing = True
+        session.updated_at = now
+        return session.model_copy(deep=True)
+
     async def delete_stale_sessions(self, before: datetime) -> int:
         raise NotImplementedError
 
@@ -285,6 +295,8 @@ async def test_workflow_b_answers_high_confidence_informational_query(
         "outcome": "pass",
         "candidateFound": True,
     }
+    assert written_logs[0].metadata["typingIndicatorAttempted"] is True
+    assert written_logs[0].metadata["typingIndicatorStatus"] == "sent"
     assert isinstance(written_logs[0].metadata["latencyMs"], int)
 
     session = await database.session_state.get_by_identity("Niyomilan", "whatsapp", "9845891194")
@@ -347,6 +359,8 @@ async def test_workflow_b_escalates_low_confidence_query(
         "candidateFound": True,
     }
     assert written_logs[0].metadata["target"] == "human_review"
+    assert written_logs[0].metadata["typingIndicatorAttempted"] is True
+    assert written_logs[0].metadata["typingIndicatorStatus"] == "sent"
     assert isinstance(written_logs[0].metadata["latencyMs"], int)
 
 
@@ -436,7 +450,7 @@ async def test_workflow_b_prompt_prioritizes_last_coherent_sentence(
     assert "Infer the LAST COHERENT SENTENCE or question from recentMessages" in captured["system_prompt"]
     assert '"recentMessages": ["What does Niyomilan do?", "What is it trying to solve?", "Why is it called Niyomilan?"]' in captured["user_prompt"]
     assert '"context": "Hi there"' in captured["user_prompt"]
-    assert '"recentText": "What does Niyomilan do? What is it trying to solve? Why is it called Niyomilan?"' in captured["user_prompt"]
+    assert '"recentText"' not in captured["user_prompt"]
     assert '"coreRule": "Use the last coherent sentence or question from recentMessages as the authoritative ask. recentMessages is the current debounce window only. context is previous processed history only and must not override it."' in captured["user_prompt"]
 
 
@@ -493,7 +507,7 @@ async def test_workflow_b_uses_last_sentence_from_recent_window_for_matching(
     assert result.decision == GovernanceDecision.ANSWERED
     assert result.answer_supplied == "It comes from Sanskrit roots describing connection and purposeful engagement."
     assert '"recentMessages": ["What does Niyomilan do?", "What is it trying to solve?", "Why is it called Niyomilan?"]' in captured["user_prompt"]
-    assert '"recentText": "What does Niyomilan do? What is it trying to solve? Why is it called Niyomilan?"' in captured["user_prompt"]
+    assert '"recentText"' not in captured["user_prompt"]
     assert '"context": "Older topic that should become context"' in captured["user_prompt"]
 
     session = await database.session_state.get_by_identity("Niyomilan", "whatsapp", "9845891194")
@@ -737,7 +751,7 @@ async def test_workflow_b_uses_session_provider_for_outbound_routing() -> None:
 
 @pytest.mark.asyncio
 async def test_workflow_b_sends_typing_indicator_when_processing_begins() -> None:
-    """Workflow B should trigger a provider typing indicator before answering."""
+    """Workflow B should trigger a provider typing indicator as soon as processing starts."""
 
     captured: dict[str, Any] = {}
 
@@ -795,3 +809,62 @@ async def test_workflow_b_sends_typing_indicator_when_processing_begins() -> Non
     assert captured["requested_provider"] == "twilio"
     assert captured["typing_message_id"] == "SM1"
     assert captured["sent_text"] == "We help customers."
+
+
+@pytest.mark.asyncio
+async def test_workflow_b_sends_typing_indicator_even_if_decision_escalates() -> None:
+    """Workflow B should send typing at start even if the run later escalates."""
+
+    captured: dict[str, Any] = {}
+
+    async def fake_generate_completion(**kwargs) -> str:
+        return '{"bestIndex": 0, "similarityScore": 0.21, "reason": "candidate is weakly related"}'
+
+    class FakeProvider:
+        name = "twilio"
+
+        async def send_typing_indicator(self, *, inbound_message_id, settings):
+            captured["typing_message_id"] = inbound_message_id
+
+        async def send_text(self, message, *, settings):
+            captured["sent_text"] = message.text
+            return OutboundSendResult(
+                provider="twilio",
+                accepted=True,
+                status="accepted",
+                externalMessageId="SM321",
+            )
+
+    database = ProcessingDatabase(
+        sessions=[_ready_session(text="What do you do?", provider="twilio")],
+        knowledge_entries=[
+            KnowledgeEntry(
+                _id="faq-1",
+                tenantId="Niyomilan",
+                domainId="general",
+                question="What do you do?",
+                answer="We help customers.",
+            )
+        ],
+        tenants=[_tenant(threshold=0.75)],
+    )
+
+    monkeypatch = pytest.MonkeyPatch()
+
+    def fake_get_whatsapp_provider(**kwargs):
+        return FakeProvider()
+
+    monkeypatch.setattr("svmp_core.workflows.workflow_b.generate_completion", fake_generate_completion)
+    monkeypatch.setattr("svmp_core.workflows.workflow_b.get_whatsapp_provider", fake_get_whatsapp_provider)
+    try:
+        result = await run_workflow_b(
+            database,
+            settings=Settings(_env_file=None, SIMILARITY_THRESHOLD=0.75, WHATSAPP_PROVIDER="meta"),
+            now=datetime(2026, 3, 30, 10, 0, tzinfo=timezone.utc),
+        )
+    finally:
+        monkeypatch.undo()
+
+    assert result.decision == GovernanceDecision.ESCALATED
+    assert captured["typing_message_id"] == "SM1"
+    assert "sent_text" not in captured
