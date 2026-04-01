@@ -28,12 +28,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     """Build the CLI argument parser for live verification."""
 
     parser = argparse.ArgumentParser(description="Verify the live Workflow A/B path against MongoDB and OpenAI.")
-    parser.add_argument("--tenant-id", default="Niyomilan", help="Tenant id to use for the verification payload.")
+    parser.add_argument("--tenant-id", default="Stay", help="Tenant id to use for the verification payload.")
     parser.add_argument("--client-id", default="whatsapp", help="Client/channel id to use for the verification payload.")
     parser.add_argument("--user-id", default="demo-user-001", help="User id to use for the verification payload.")
     parser.add_argument(
         "--text",
-        default="What does Niyomilan do?",
+        default="What size are STAY Parfums bottles?",
         help="Inbound message text to send through Workflow A/B.",
     )
     return parser

@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import json
-import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from time import perf_counter
 from typing import Any
 
 from svmp_core.config import Settings, get_settings, get_tenant_confidence_threshold
@@ -31,25 +31,10 @@ from svmp_core.models import (
 )
 
 
-_TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
-
-
 def _utcnow() -> datetime:
     """Return a timezone-aware UTC timestamp."""
 
     return datetime.now(timezone.utc)
-
-
-def _tokenize(value: str) -> set[str]:
-    """Split free text into lowercase searchable tokens."""
-
-    return set(_TOKEN_PATTERN.findall(value.lower()))
-
-
-def _combine_messages(session: SessionState) -> str:
-    """Collapse buffered message fragments into one processing string."""
-
-    return " ".join(message.text.strip() for message in session.messages if message.text.strip()).strip()
 
 
 def _strip_json_fence(value: str) -> str:
@@ -205,6 +190,52 @@ def _matcher_metadata(result: MatcherResult) -> dict[str, Any]:
     }
 
 
+def _audit_metadata(
+    *,
+    identity: IdentityFrame,
+    session: SessionState,
+    decision: str,
+    latency_ms: int,
+    reason: str,
+    provider_name: str | None,
+    threshold: float | None = None,
+    similarity_score: float | None = None,
+    similarity_outcome: str = "not_evaluated",
+    candidate_found: bool = False,
+    domain_id: str | None = None,
+    matcher_metadata: Mapping[str, Any] | None = None,
+    extra: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build consistent audit metadata for governance logs."""
+
+    metadata: dict[str, Any] = {
+        "workflow": "workflow_b",
+        "decision": decision,
+        "decisionReason": reason,
+        "latencyMs": latency_ms,
+        "sessionId": session.id,
+        "provider": provider_name,
+        "identity": {
+            "tenantId": identity.tenant_id,
+            "clientId": identity.client_id,
+            "userId": identity.user_id,
+        },
+        "similarity": {
+            "score": similarity_score,
+            "threshold": threshold,
+            "outcome": similarity_outcome,
+            "candidateFound": candidate_found,
+        },
+    }
+    if domain_id is not None:
+        metadata["domainId"] = domain_id
+    if matcher_metadata:
+        metadata.update(dict(matcher_metadata))
+    if extra:
+        metadata.update(dict(extra))
+    return metadata
+
+
 async def _archive_processed_window(
     database: Database,
     session: SessionState,
@@ -324,6 +355,7 @@ async def run_workflow_b(
 
     runtime_settings = settings or get_settings()
     current_time = now or _utcnow()
+    started_at = perf_counter()
     acquired_session: SessionState | None = None
 
     try:
@@ -358,7 +390,6 @@ async def run_workflow_b(
         combined_text = active_question
 
         tenant_document = await database.tenants.get_by_tenant_id(acquired_session.tenant_id)
-
         raw_domains = tenant_document.get("domains", []) if isinstance(tenant_document, Mapping) else []
         fallback_domain_id = _fallback_domain_id(tenant_document)
 
@@ -385,13 +416,24 @@ async def run_workflow_b(
             log = build_escalated_log(
                 identity,
                 combined_text,
-                metadata={
-                    "reason": "domain_unresolved",
-                    "target": escalation.target.value,
-                    "activeQuestion": conversation.active_question,
-                    "activeMessages": conversation.active_messages,
-                    "context": conversation.context,
-                },
+                metadata=_audit_metadata(
+                    identity=identity,
+                    session=acquired_session,
+                    decision=GovernanceDecision.ESCALATED.value,
+                    latency_ms=int((perf_counter() - started_at) * 1000),
+                    reason=escalation.reason,
+                    provider_name=acquired_session.provider,
+                    threshold=threshold,
+                    similarity_score=None,
+                    similarity_outcome="not_evaluated",
+                    candidate_found=False,
+                    extra={
+                        "target": escalation.target.value,
+                        "activeQuestion": conversation.active_question,
+                        "activeMessages": conversation.active_messages,
+                        "context": conversation.context,
+                    },
+                ),
                 timestamp=current_time,
             )
             await database.governance_logs.create(log)
@@ -433,11 +475,9 @@ async def run_workflow_b(
 
         if similarity_decision.should_answer and openai_match.entry is not None:
             matched_entry = openai_match.entry
-            assert matched_entry is not None
-            assert acquired_session is not None
             send_result = await _send_answer_reply(
                 identity,
-                openai_match.entry.answer,
+                matched_entry.answer,
                 provider_name=acquired_session.provider,
                 settings=runtime_settings,
             )
@@ -446,18 +486,31 @@ async def run_workflow_b(
                 combined_text,
                 similarity_score=similarity_decision.score or 0.0,
                 answer_supplied=matched_entry.answer,
-                metadata={
-                    "domainId": domain_id,
-                    "activeQuestion": conversation.active_question,
-                    "activeMessages": conversation.active_messages,
-                    "context": conversation.context,
-                    **matcher_metadata,
-                    "delivery": {
-                        "provider": send_result.provider,
-                        "status": send_result.status,
-                        "externalMessageId": send_result.external_message_id,
+                metadata=_audit_metadata(
+                    identity=identity,
+                    session=acquired_session,
+                    decision=GovernanceDecision.ANSWERED.value,
+                    latency_ms=int((perf_counter() - started_at) * 1000),
+                    reason=similarity_decision.reason,
+                    provider_name=acquired_session.provider,
+                    threshold=threshold,
+                    similarity_score=similarity_decision.score,
+                    similarity_outcome=similarity_decision.outcome.value,
+                    candidate_found=True,
+                    domain_id=domain_id,
+                    matcher_metadata=matcher_metadata,
+                    extra={
+                        "activeQuestion": conversation.active_question,
+                        "activeMessages": conversation.active_messages,
+                        "context": conversation.context,
+                        "matchedQuestion": matched_entry.question,
+                        "delivery": {
+                            "provider": send_result.provider,
+                            "status": send_result.status,
+                            "externalMessageId": send_result.external_message_id,
+                        },
                     },
-                },
+                ),
                 timestamp=current_time,
             )
             await database.governance_logs.create(log)
@@ -491,15 +544,27 @@ async def run_workflow_b(
             identity,
             combined_text,
             similarity_score=similarity_decision.score,
-            metadata={
-                "domainId": domain_id,
-                "activeQuestion": conversation.active_question,
-                "activeMessages": conversation.active_messages,
-                "context": conversation.context,
-                "reason": similarity_decision.reason,
-                "target": escalation.target.value,
-                **matcher_metadata,
-            },
+            metadata=_audit_metadata(
+                identity=identity,
+                session=acquired_session,
+                decision=GovernanceDecision.ESCALATED.value,
+                latency_ms=int((perf_counter() - started_at) * 1000),
+                reason=similarity_decision.reason,
+                provider_name=acquired_session.provider,
+                threshold=threshold,
+                similarity_score=similarity_decision.score,
+                similarity_outcome=similarity_decision.outcome.value,
+                candidate_found=openai_match.entry is not None,
+                domain_id=domain_id,
+                matcher_metadata=matcher_metadata,
+                extra={
+                    "target": escalation.target.value,
+                    "activeQuestion": conversation.active_question,
+                    "activeMessages": conversation.active_messages,
+                    "context": conversation.context,
+                    "matchedQuestion": openai_match.entry.question if openai_match.entry is not None else None,
+                },
+            ),
             timestamp=current_time,
         )
         await database.governance_logs.create(log)

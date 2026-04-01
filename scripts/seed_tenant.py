@@ -62,12 +62,60 @@ class MongoTenantSeedWriter:
     def __init__(self, collection) -> None:
         self._collection = collection
 
+    @staticmethod
+    def _channel_values(tenant_document: Mapping[str, Any]) -> list[tuple[str, list[str]]]:
+        """Extract provider channel identifiers so conflicting mappings can be cleared."""
+
+        channels = tenant_document.get("channels", {})
+        if not isinstance(channels, Mapping):
+            return []
+
+        field_map = {
+            "meta": {
+                "phoneNumberIds": "channels.meta.phoneNumberIds",
+                "displayNumbers": "channels.meta.displayNumbers",
+            },
+            "twilio": {
+                "whatsappNumbers": "channels.twilio.whatsappNumbers",
+                "accountSids": "channels.twilio.accountSids",
+            },
+        }
+
+        extracted: list[tuple[str, list[str]]] = []
+        for provider_name, provider_fields in field_map.items():
+            provider_payload = channels.get(provider_name)
+            if not isinstance(provider_payload, Mapping):
+                continue
+
+            for key, field_path in provider_fields.items():
+                raw_values = provider_payload.get(key)
+                if not isinstance(raw_values, Sequence) or isinstance(raw_values, (str, bytes)):
+                    continue
+
+                normalized_values = [
+                    value.strip()
+                    for value in raw_values
+                    if isinstance(value, str) and value.strip()
+                ]
+                if normalized_values:
+                    extracted.append((field_path, normalized_values))
+
+        return extracted
+
     async def upsert_tenant(self, tenant_document: Mapping[str, Any]) -> int:
         """Upsert a tenant document using tenantId as the stable key."""
 
         payload = deepcopy(dict(tenant_document))
+        tenant_id = payload["tenantId"]
+
+        for field_path, values in self._channel_values(payload):
+            await self._collection.update_many(
+                {"tenantId": {"$ne": tenant_id}},
+                {"$pull": {field_path: {"$in": values}}},
+            )
+
         await self._collection.replace_one(
-            {"tenantId": payload["tenantId"]},
+            {"tenantId": tenant_id},
             payload,
             upsert=True,
         )

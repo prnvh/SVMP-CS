@@ -16,7 +16,7 @@ def _settings() -> Settings:
     return Settings(
         _env_file=None,
         OPENAI_API_KEY="test-key",
-        LLM_MODEL="gpt-4o-mini",
+        LLM_MODEL="gpt-4.1",
     )
 
 
