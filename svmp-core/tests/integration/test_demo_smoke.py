@@ -70,6 +70,7 @@ class DemoSessionStateRepository(SessionStateRepository):
             for session in self._sessions.values()
             if session.status == "open"
             and session.processing is False
+            and session.escalate is False
             and session.debounce_expires_at <= now
         ]
         if not ready_sessions:
@@ -302,5 +303,9 @@ async def test_demo_smoke_ingest_then_process_writes_governance_log(
             "threshold": 0.75,
             "outcome": "pass",
             "candidateFound": True,
+        }
+        assert written_logs[0].metadata["timing"]["messageWindow"]["lastMessageAt"] is not None
+        assert "workflow_b.matcher.openai_completion" in {
+            step["name"] for step in written_logs[0].metadata["timing"]["workflow"]["steps"]
         }
         assert isinstance(written_logs[0].metadata["latencyMs"], int)

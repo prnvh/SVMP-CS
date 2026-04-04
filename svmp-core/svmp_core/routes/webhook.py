@@ -10,10 +10,14 @@ from urllib.parse import parse_qsl
 from fastapi import APIRouter, Header, HTTPException, Query, Request, Response, status
 
 from svmp_core.config import Settings, get_settings
+from svmp_core.core.timing import LatencyTrace
 from svmp_core.db.base import Database
 from svmp_core.exceptions import DatabaseError, ValidationError
 from svmp_core.integrations import get_whatsapp_provider
+from svmp_core.logger import get_logger
 from svmp_core.workflows import run_workflow_a
+
+logger = get_logger("svmp.routes.webhook")
 
 
 def build_webhook_router(
@@ -117,64 +121,119 @@ def build_webhook_router(
         tenant_id_header: str | None = Header(default=None, alias="X-SVMP-Tenant-Id"),
         provider_header: str | None = Header(default=None, alias="X-SVMP-Provider"),
     ) -> dict[str, str]:
+        trace = LatencyTrace("webhook_intake")
         content_type = request.headers.get("content-type")
         resolved_tenant_id = tenant_id_header or tenant_id_query
         requested_provider = provider_header or provider_query
+        provider_name: str | None = requested_provider.strip().lower() if isinstance(requested_provider, str) and requested_provider.strip() else None
 
         try:
-            if content_type is not None and "application/x-www-form-urlencoded" in content_type.lower():
-                raw_payload = dict(parse_qsl((await request.body()).decode("utf-8"), keep_blank_values=True))
-            else:
-                raw_payload = await request.json()
-                if not isinstance(raw_payload, Mapping):
-                    raise ValidationError("webhook payload must be a JSON object")
+            with trace.step("webhook.parse_request_payload"):
+                if content_type is not None and "application/x-www-form-urlencoded" in content_type.lower():
+                    raw_payload = dict(parse_qsl((await request.body()).decode("utf-8"), keep_blank_values=True))
+                else:
+                    raw_payload = await request.json()
+                    if not isinstance(raw_payload, Mapping):
+                        raise ValidationError("webhook payload must be a JSON object")
 
-            provider = get_whatsapp_provider(
-                settings=runtime_settings,
-                requested_provider=requested_provider,
-                payload=raw_payload if isinstance(raw_payload, Mapping) else None,
-                content_type=content_type,
-            )
+            with trace.step("webhook.resolve_provider") as step:
+                provider = get_whatsapp_provider(
+                    settings=runtime_settings,
+                    requested_provider=requested_provider,
+                    payload=raw_payload if isinstance(raw_payload, Mapping) else None,
+                    content_type=content_type,
+                )
+                provider_name = provider.name
+                step["provider"] = provider.name
 
             if resolved_tenant_id is None and provider.name != "normalized":
-                identities = _extract_provider_identities(provider.name, raw_payload)
-                resolved_tenant_id = await database.tenants.resolve_tenant_id_for_provider(
-                    provider=provider.name,
-                    identities=identities,
-                )
-                if resolved_tenant_id is None:
-                    raise ValidationError("tenantId could not be resolved from provider payload")
+                with trace.step("webhook.resolve_tenant_id_from_provider_payload") as step:
+                    identities = _extract_provider_identities(provider.name, raw_payload)
+                    step["identities"] = identities
+                    resolved_tenant_id = await database.tenants.resolve_tenant_id_for_provider(
+                        provider=provider.name,
+                        identities=identities,
+                    )
+                    step["resolvedTenantId"] = resolved_tenant_id
+                    if resolved_tenant_id is None:
+                        raise ValidationError("tenantId could not be resolved from provider payload")
 
-            if content_type is not None and "application/x-www-form-urlencoded" in content_type.lower():
-                payloads = provider.normalize_form_payload(
-                    raw_payload,
-                    tenant_id=resolved_tenant_id,
-                )
-            else:
-                payloads = provider.normalize_json_payload(
-                    raw_payload,
-                    tenant_id=resolved_tenant_id,
-                )
+            with trace.step("webhook.normalize_payloads") as step:
+                if content_type is not None and "application/x-www-form-urlencoded" in content_type.lower():
+                    payloads = provider.normalize_form_payload(
+                        raw_payload,
+                        tenant_id=resolved_tenant_id,
+                    )
+                else:
+                    payloads = provider.normalize_json_payload(
+                        raw_payload,
+                        tenant_id=resolved_tenant_id,
+                    )
+                step["payloadCount"] = len(payloads)
         except JSONDecodeError as exc:
+            logger.warning(
+                "webhook_intake_failed",
+                provider=provider_name,
+                tenantId=resolved_tenant_id,
+                trace=trace.snapshot(outcome="failed", failureStage="parse_request_payload"),
+            )
             raise _http_400("webhook payload must be valid JSON") from exc
         except ValidationError as exc:
+            logger.warning(
+                "webhook_intake_failed",
+                provider=provider_name,
+                tenantId=resolved_tenant_id,
+                trace=trace.snapshot(outcome="failed", failureStage="validation"),
+            )
             raise _http_400(str(exc)) from exc
 
         session_id = ""
 
         try:
-            for payload in payloads:
-                session = await run_workflow_a(
-                    database,
-                    payload,
-                    settings=runtime_settings,
-                )
-                if session.id is not None and not session_id:
-                    session_id = session.id
+            for index, payload in enumerate(payloads):
+                with trace.step("webhook.run_workflow_a", payloadIndex=index) as step:
+                    session = await run_workflow_a(
+                        database,
+                        payload,
+                        settings=runtime_settings,
+                    )
+                    step["provider"] = payload.provider
+                    step["tenantId"] = payload.tenant_id
+                    step["clientId"] = payload.client_id
+                    step["userId"] = payload.user_id
+                    step["sessionId"] = session.id
+                    if session.id is not None and not session_id:
+                        session_id = session.id
         except ValidationError as exc:
+            logger.warning(
+                "webhook_intake_failed",
+                provider=provider_name,
+                tenantId=resolved_tenant_id,
+                sessionId=session_id or None,
+                trace=trace.snapshot(outcome="failed", failureStage="workflow_a"),
+            )
             raise _http_400(str(exc)) from exc
         except DatabaseError as exc:
+            logger.exception(
+                "webhook_intake_failed",
+                provider=provider_name,
+                tenantId=resolved_tenant_id,
+                sessionId=session_id or None,
+                trace=trace.snapshot(outcome="failed", failureStage="database"),
+            )
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+
+        logger.info(
+            "webhook_intake_completed",
+            provider=provider_name,
+            tenantId=resolved_tenant_id,
+            sessionId=session_id or None,
+            trace=trace.snapshot(
+                outcome="accepted",
+                contentType=content_type,
+                payloadCount=len(payloads),
+            ),
+        )
 
         return {
             "status": "accepted",

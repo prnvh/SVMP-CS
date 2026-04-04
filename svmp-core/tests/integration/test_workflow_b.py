@@ -64,6 +64,7 @@ class ProcessingSessionRepository(SessionStateRepository):
             for session in self._sessions.values()
             if session.status == "open"
             and session.processing is False
+            and session.escalate is False
             and session.debounce_expires_at <= now
         ]
         if not ready_sessions:
@@ -281,12 +282,21 @@ async def test_workflow_b_answers_high_confidence_informational_query(
         "outcome": "pass",
         "candidateFound": True,
     }
+    timing = written_logs[0].metadata["timing"]
+    assert timing["messageWindow"]["lastMessageAt"] == "2026-03-30T09:55:00+00:00"
+    assert timing["messageWindow"]["debounceExpiresAt"] == "2026-03-30T09:59:00+00:00"
+    assert timing["messageWindow"]["durationsMs"]["lastMessageToWorkflowBStart"] == 300000
+    assert timing["messageWindow"]["durationsMs"]["debounceExpiryToWorkflowBStart"] == 60000
+    assert "workflow_b.matcher.openai_completion" in {
+        step["name"] for step in timing["workflow"]["steps"]
+    }
     assert isinstance(written_logs[0].metadata["latencyMs"], int)
 
     session = await database.session_state.get_by_identity("Niyomilan", "whatsapp", "9845891194")
     assert session is not None
     assert session.status == "open"
     assert session.processing is True
+    assert session.escalate is False
     assert session.messages == []
     assert session.context == ["What do you do?"]
 
@@ -342,8 +352,39 @@ async def test_workflow_b_escalates_low_confidence_query(
         "outcome": "fail",
         "candidateFound": True,
     }
+    timing = written_logs[0].metadata["timing"]
+    assert timing["messageWindow"]["lastMessageAt"] == "2026-03-30T09:55:00+00:00"
+    assert timing["messageWindow"]["durationsMs"]["debounceExpiryToWorkflowBStart"] == 60000
+    assert "workflow_b.similarity.evaluate" in {
+        step["name"] for step in timing["workflow"]["steps"]
+    }
     assert written_logs[0].metadata["target"] == "human_review"
     assert isinstance(written_logs[0].metadata["latencyMs"], int)
+
+    session = await database.session_state.get_by_identity("Niyomilan", "whatsapp", "9845891194")
+    assert session is not None
+    assert session.escalate is True
+
+
+@pytest.mark.asyncio
+async def test_workflow_b_skips_sessions_that_have_already_been_escalated() -> None:
+    """Sessions marked with escalate=true should no longer be picked up by the bot."""
+
+    database = ProcessingDatabase(
+        sessions=[_ready_session(text="Can you still read this?").model_copy(update={"escalate": True}, deep=True)],
+        knowledge_entries=[],
+        tenants=[_tenant(threshold=0.75)],
+    )
+
+    result = await run_workflow_b(
+        database,
+        settings=_settings(),
+        now=datetime(2026, 3, 30, 10, 0, tzinfo=timezone.utc),
+    )
+
+    assert result.processed is False
+    assert result.decision is None
+    assert database.governance_logs.logs == []
 
 
 @pytest.mark.asyncio

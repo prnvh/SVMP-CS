@@ -19,9 +19,11 @@ from svmp_core.core import (
     evaluate_similarity,
     request_escalation,
 )
+from svmp_core.core.timing import LatencyTrace
 from svmp_core.db.base import Database
 from svmp_core.exceptions import DatabaseError, RoutingError
 from svmp_core.integrations import generate_completion, get_whatsapp_provider
+from svmp_core.logger import get_logger
 from svmp_core.models import (
     GovernanceDecision,
     KnowledgeEntry,
@@ -29,6 +31,8 @@ from svmp_core.models import (
     OutboundTextMessage,
     SessionState,
 )
+
+logger = get_logger("svmp.workflows.workflow_b")
 
 
 def _utcnow() -> datetime:
@@ -99,11 +103,70 @@ def _normalize_similarity_score(raw_score: Any) -> float:
     raise RoutingError("OpenAI matcher returned an invalid similarity score")
 
 
+def _duration_ms_between(start: datetime | None, end: datetime | None) -> int | None:
+    """Return the integer duration in milliseconds between two timestamps."""
+
+    if start is None or end is None:
+        return None
+    normalized_start = _normalize_utc_datetime(start)
+    normalized_end = _normalize_utc_datetime(end)
+    return int(round((normalized_end - normalized_start).total_seconds() * 1000))
+
+
+def _normalize_utc_datetime(value: datetime) -> datetime:
+    """Normalize datetimes to timezone-aware UTC for safe arithmetic."""
+
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _parse_trace_timestamp(value: str | None) -> datetime | None:
+    """Parse an ISO timestamp emitted by the latency tracer."""
+
+    if not isinstance(value, str) or not value.strip():
+        return None
+
+    normalized = value.strip().replace("Z", "+00:00")
+    return datetime.fromisoformat(normalized)
+
+
+def _message_window_timing(
+    session: SessionState,
+    *,
+    workflow_started_at: datetime,
+    acquired_at: datetime | None,
+) -> dict[str, Any]:
+    """Describe queueing and debounce timing before Workflow B decisioning."""
+
+    message_times = sorted(message.at for message in session.messages)
+    first_message_at = message_times[0] if message_times else None
+    last_message_at = message_times[-1] if message_times else None
+    debounce_expires_at = session.debounce_expires_at
+
+    return {
+        "firstMessageAt": _normalize_utc_datetime(first_message_at).isoformat() if first_message_at is not None else None,
+        "lastMessageAt": _normalize_utc_datetime(last_message_at).isoformat() if last_message_at is not None else None,
+        "debounceExpiresAt": _normalize_utc_datetime(debounce_expires_at).isoformat(),
+        "workflowBStartedAt": _normalize_utc_datetime(workflow_started_at).isoformat(),
+        "sessionAcquiredAt": _normalize_utc_datetime(acquired_at).isoformat() if acquired_at is not None else None,
+        "durationsMs": {
+            "messageWindowSpan": _duration_ms_between(first_message_at, last_message_at),
+            "lastMessageToDebounceExpiry": _duration_ms_between(last_message_at, debounce_expires_at),
+            "lastMessageToWorkflowBStart": _duration_ms_between(last_message_at, workflow_started_at),
+            "debounceExpiryToWorkflowBStart": _duration_ms_between(debounce_expires_at, workflow_started_at),
+            "lastMessageToSessionAcquire": _duration_ms_between(last_message_at, acquired_at),
+            "debounceExpiryToSessionAcquire": _duration_ms_between(debounce_expires_at, acquired_at),
+        },
+    }
+
+
 async def _openai_match(
     conversation: ConversationView,
     entries: list[KnowledgeEntry],
     *,
     settings: Settings,
+    trace: LatencyTrace | None = None,
 ) -> MatcherResult:
     """Use OpenAI directly to choose the best FAQ candidate."""
 
@@ -117,42 +180,73 @@ async def _openai_match(
         )
 
     candidates = list(entries)
-    candidate_payload = [
-        {
-            "index": index,
-            "question": entry.question,
-            "answer": entry.answer,
-            "tags": list(entry.tags),
-        }
-        for index, entry in enumerate(candidates)
-    ]
-
-    response = await generate_completion(
-        system_prompt=(
-            "You rank FAQ candidates for customer-support automation. "
-            "activeQuestion is the only text that should drive candidate selection and answer decision making. "
-            "context is archived history from previous processed windows and must never override activeQuestion. "
-            "Use context only to clarify references when activeQuestion clearly points back to earlier history. "
-            "If activeQuestion alone is unclear or not safely answerable from the candidates, return no match. "
-            "Return valid JSON only with keys bestIndex, similarityScore, and reason. "
-            "bestIndex must be an integer index from the candidates list or null if none match. "
-            "similarityScore must be a number between 0 and 1, or between 0 and 100, or null when there is no safe match."
-        ),
-        user_prompt=json.dumps(
+    if trace is None:
+        candidate_payload = [
             {
-                "activeQuestion": conversation.active_question,
-                "activeMessages": conversation.active_messages,
-                "context": conversation.context,
-                "coreRule": "Use activeQuestion for decision making. Do not answer from context unless activeQuestion clearly refers back to it.",
-                "candidates": candidate_payload,
-            },
-            ensure_ascii=True,
-        ),
-        settings=settings,
-        temperature=0.0,
-        max_tokens=200,
+                "index": index,
+                "question": entry.question,
+                "answer": entry.answer,
+                "tags": list(entry.tags),
+            }
+            for index, entry in enumerate(candidates)
+        ]
+    else:
+        with trace.step("workflow_b.matcher.prepare_candidates") as step:
+            candidate_payload = [
+                {
+                    "index": index,
+                    "question": entry.question,
+                    "answer": entry.answer,
+                    "tags": list(entry.tags),
+                }
+                for index, entry in enumerate(candidates)
+            ]
+            step["candidateCount"] = len(candidate_payload)
+
+    system_prompt = (
+        "You rank FAQ candidates for customer-support automation. "
+        "activeQuestion is the only text that should drive candidate selection and answer decision making. "
+        "context is archived history from previous processed windows and must never override activeQuestion. "
+        "Use context only to clarify references when activeQuestion clearly points back to earlier history. "
+        "If activeQuestion alone is unclear or not safely answerable from the candidates, return no match. "
+        "Return valid JSON only with keys bestIndex, similarityScore, and reason. "
+        "bestIndex must be an integer index from the candidates list or null if none match. "
+        "similarityScore must be a number between 0 and 1, or between 0 and 100, or null when there is no safe match."
     )
-    parsed = json.loads(_strip_json_fence(response))
+    user_prompt = json.dumps(
+        {
+            "activeQuestion": conversation.active_question,
+            "activeMessages": conversation.active_messages,
+            "context": conversation.context,
+            "coreRule": "Use activeQuestion for decision making. Do not answer from context unless activeQuestion clearly refers back to it.",
+            "candidates": candidate_payload,
+        },
+        ensure_ascii=True,
+    )
+
+    if trace is None:
+        response = await generate_completion(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            settings=settings,
+            temperature=0.0,
+            max_tokens=200,
+        )
+    else:
+        with trace.step("workflow_b.matcher.openai_completion", candidateCount=len(candidate_payload)):
+            response = await generate_completion(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                settings=settings,
+                temperature=0.0,
+                max_tokens=200,
+            )
+
+    if trace is None:
+        parsed = json.loads(_strip_json_fence(response))
+    else:
+        with trace.step("workflow_b.matcher.parse_response"):
+            parsed = json.loads(_strip_json_fence(response))
 
     best_index = parsed.get("bestIndex")
     similarity_score = parsed.get("similarityScore")
@@ -242,6 +336,7 @@ async def _archive_processed_window(
     *,
     active_question: str,
     now: datetime,
+    escalate: bool | None = None,
 ) -> SessionState:
     """Archive the processed active window while preserving any newer inbound messages."""
 
@@ -269,15 +364,19 @@ async def _archive_processed_window(
 
     has_unprocessed_messages = any(message.text.strip() for message in remaining_messages)
 
+    update_payload: dict[str, Any] = {
+        "context": next_context,
+        "messages": remaining_messages,
+        "updated_at": latest_session.updated_at if has_unprocessed_messages else now,
+        "debounce_expires_at": latest_session.debounce_expires_at,
+        "processing": False if has_unprocessed_messages else True,
+    }
+    if escalate is not None:
+        update_payload["escalate"] = escalate
+
     updated_session = await database.session_state.update_by_id(
         session.id,
-        {
-            "context": next_context,
-            "messages": remaining_messages,
-            "updated_at": latest_session.updated_at if has_unprocessed_messages else now,
-            "debounce_expires_at": latest_session.debounce_expires_at,
-            "processing": False if has_unprocessed_messages else True,
-        },
+        update_payload,
     )
     if updated_session is None:
         raise DatabaseError("failed to archive processed session window")
@@ -356,11 +455,17 @@ async def run_workflow_b(
     runtime_settings = settings or get_settings()
     current_time = now or _utcnow()
     started_at = perf_counter()
+    trace = LatencyTrace("workflow_b", started_at=current_time)
     acquired_session: SessionState | None = None
 
     try:
-        acquired_session = await database.session_state.acquire_ready_session(current_time)
+        with trace.step("workflow_b.session_state.acquire_ready_session") as acquire_step:
+            acquired_session = await database.session_state.acquire_ready_session(current_time)
         if acquired_session is None:
+            logger.debug(
+                "workflow_b_no_ready_session",
+                trace=trace.snapshot(outcome="idle"),
+            )
             return WorkflowBResult(
                 processed=False,
                 session_id=None,
@@ -378,34 +483,48 @@ async def run_workflow_b(
         if acquired_session.id is None:
             raise DatabaseError("ready session missing id")
 
-        identity = IdentityFrame(
-            tenant_id=acquired_session.tenant_id,
-            client_id=acquired_session.client_id,
-            user_id=acquired_session.user_id,
-        )
-        conversation = _build_conversation_view(acquired_session)
+        acquired_at = _parse_trace_timestamp(acquire_step.get("finishedAt"))
+        with trace.step("workflow_b.identity.from_session"):
+            identity = IdentityFrame(
+                tenant_id=acquired_session.tenant_id,
+                client_id=acquired_session.client_id,
+                user_id=acquired_session.user_id,
+            )
+        with trace.step("workflow_b.conversation.build_view"):
+            conversation = _build_conversation_view(acquired_session)
         active_question = conversation.active_question
         if not active_question:
             raise RoutingError("ready session has no searchable text")
         combined_text = active_question
+        timing_metadata = {
+            "workflow": trace.snapshot(),
+            "messageWindow": _message_window_timing(
+                acquired_session,
+                workflow_started_at=current_time,
+                acquired_at=acquired_at,
+            ),
+        }
 
-        tenant_document = await database.tenants.get_by_tenant_id(acquired_session.tenant_id)
+        with trace.step("workflow_b.tenants.get_by_tenant_id"):
+            tenant_document = await database.tenants.get_by_tenant_id(acquired_session.tenant_id)
         raw_domains = tenant_document.get("domains", []) if isinstance(tenant_document, Mapping) else []
         fallback_domain_id = _fallback_domain_id(tenant_document)
 
-        try:
-            threshold = get_tenant_confidence_threshold(tenant_document)
-        except ValueError:
-            threshold = runtime_settings.SIMILARITY_THRESHOLD
+        with trace.step("workflow_b.config.resolve_threshold"):
+            try:
+                threshold = get_tenant_confidence_threshold(tenant_document)
+            except ValueError:
+                threshold = runtime_settings.SIMILARITY_THRESHOLD
 
-        try:
-            domain_id = choose_domain(
-                active_question,
-                raw_domains if isinstance(raw_domains, list) else [],
-                fallback_domain_id=fallback_domain_id,
-            )
-        except RoutingError:
-            domain_id = fallback_domain_id
+        with trace.step("workflow_b.domain.choose_domain"):
+            try:
+                domain_id = choose_domain(
+                    active_question,
+                    raw_domains if isinstance(raw_domains, list) else [],
+                    fallback_domain_id=fallback_domain_id,
+                )
+            except RoutingError:
+                domain_id = fallback_domain_id
 
         if domain_id is None:
             escalation = request_escalation(
@@ -428,6 +547,10 @@ async def run_workflow_b(
                     similarity_outcome="not_evaluated",
                     candidate_found=False,
                     extra={
+                        "timing": {
+                            **timing_metadata,
+                            "workflow": trace.snapshot(),
+                        },
                         "target": escalation.target.value,
                         "activeQuestion": conversation.active_question,
                         "activeMessages": conversation.active_messages,
@@ -436,12 +559,28 @@ async def run_workflow_b(
                 ),
                 timestamp=current_time,
             )
-            await database.governance_logs.create(log)
-            await _archive_processed_window(
-                database,
-                acquired_session,
-                active_question=conversation.active_question,
-                now=current_time,
+            with trace.step("workflow_b.governance_logs.create"):
+                await database.governance_logs.create(log)
+            with trace.step("workflow_b.session_state.archive_processed_window"):
+                await _archive_processed_window(
+                    database,
+                    acquired_session,
+                    active_question=conversation.active_question,
+                    now=current_time,
+                    escalate=True,
+                )
+            logger.info(
+                "workflow_b_completed",
+                decision=GovernanceDecision.ESCALATED.value,
+                sessionId=acquired_session.id,
+                tenantId=identity.tenant_id,
+                clientId=identity.client_id,
+                userId=identity.user_id,
+                domainId=None,
+                trace=trace.snapshot(
+                    outcome=GovernanceDecision.ESCALATED.value,
+                    messageWindow=timing_metadata["messageWindow"],
+                ),
             )
             return WorkflowBResult(
                 processed=True,
@@ -457,30 +596,38 @@ async def run_workflow_b(
                 matcher_used="domain_gate",
             )
 
-        entries = await database.knowledge_base.list_active_by_tenant_and_domain(
-            acquired_session.tenant_id,
-            domain_id,
-        )
+        with trace.step("workflow_b.knowledge_base.list_active_by_tenant_and_domain", domainId=domain_id) as step:
+            entries = await database.knowledge_base.list_active_by_tenant_and_domain(
+                acquired_session.tenant_id,
+                domain_id,
+            )
+            step["entryCount"] = len(entries)
         openai_match = await _openai_match(
             conversation,
             entries,
             settings=runtime_settings,
+            trace=trace,
         )
-        similarity_decision = evaluate_similarity(
-            openai_match.score,
-            threshold,
-            candidate_found=openai_match.entry is not None,
-        )
+        with trace.step("workflow_b.similarity.evaluate"):
+            similarity_decision = evaluate_similarity(
+                openai_match.score,
+                threshold,
+                candidate_found=openai_match.entry is not None,
+            )
         matcher_metadata = _matcher_metadata(openai_match)
 
         if similarity_decision.should_answer and openai_match.entry is not None:
             matched_entry = openai_match.entry
-            send_result = await _send_answer_reply(
-                identity,
-                matched_entry.answer,
-                provider_name=acquired_session.provider,
-                settings=runtime_settings,
-            )
+            with trace.step(
+                "workflow_b.outbound.send_answer_reply",
+                provider=acquired_session.provider or runtime_settings.WHATSAPP_PROVIDER,
+            ):
+                send_result = await _send_answer_reply(
+                    identity,
+                    matched_entry.answer,
+                    provider_name=acquired_session.provider,
+                    settings=runtime_settings,
+                )
             log = build_answered_log(
                 identity,
                 combined_text,
@@ -500,6 +647,10 @@ async def run_workflow_b(
                     domain_id=domain_id,
                     matcher_metadata=matcher_metadata,
                     extra={
+                        "timing": {
+                            **timing_metadata,
+                            "workflow": trace.snapshot(),
+                        },
                         "activeQuestion": conversation.active_question,
                         "activeMessages": conversation.active_messages,
                         "context": conversation.context,
@@ -513,12 +664,28 @@ async def run_workflow_b(
                 ),
                 timestamp=current_time,
             )
-            await database.governance_logs.create(log)
-            await _archive_processed_window(
-                database,
-                acquired_session,
-                active_question=conversation.active_question,
-                now=current_time,
+            with trace.step("workflow_b.governance_logs.create"):
+                await database.governance_logs.create(log)
+            with trace.step("workflow_b.session_state.archive_processed_window"):
+                await _archive_processed_window(
+                    database,
+                    acquired_session,
+                    active_question=conversation.active_question,
+                    now=current_time,
+                )
+            logger.info(
+                "workflow_b_completed",
+                decision=GovernanceDecision.ANSWERED.value,
+                sessionId=acquired_session.id,
+                tenantId=identity.tenant_id,
+                clientId=identity.client_id,
+                userId=identity.user_id,
+                domainId=domain_id,
+                similarityScore=similarity_decision.score,
+                trace=trace.snapshot(
+                    outcome=GovernanceDecision.ANSWERED.value,
+                    messageWindow=timing_metadata["messageWindow"],
+                ),
             )
             return WorkflowBResult(
                 processed=True,
@@ -558,6 +725,10 @@ async def run_workflow_b(
                 domain_id=domain_id,
                 matcher_metadata=matcher_metadata,
                 extra={
+                    "timing": {
+                        **timing_metadata,
+                        "workflow": trace.snapshot(),
+                    },
                     "target": escalation.target.value,
                     "activeQuestion": conversation.active_question,
                     "activeMessages": conversation.active_messages,
@@ -567,12 +738,29 @@ async def run_workflow_b(
             ),
             timestamp=current_time,
         )
-        await database.governance_logs.create(log)
-        await _archive_processed_window(
-            database,
-            acquired_session,
-            active_question=conversation.active_question,
-            now=current_time,
+        with trace.step("workflow_b.governance_logs.create"):
+            await database.governance_logs.create(log)
+        with trace.step("workflow_b.session_state.archive_processed_window"):
+            await _archive_processed_window(
+                database,
+                acquired_session,
+                active_question=conversation.active_question,
+                now=current_time,
+                escalate=True,
+            )
+        logger.info(
+            "workflow_b_completed",
+            decision=GovernanceDecision.ESCALATED.value,
+            sessionId=acquired_session.id,
+            tenantId=identity.tenant_id,
+            clientId=identity.client_id,
+            userId=identity.user_id,
+            domainId=domain_id,
+            similarityScore=similarity_decision.score,
+            trace=trace.snapshot(
+                outcome=GovernanceDecision.ESCALATED.value,
+                messageWindow=timing_metadata["messageWindow"],
+            ),
         )
         return WorkflowBResult(
             processed=True,
@@ -588,4 +776,20 @@ async def run_workflow_b(
             matcher_used="openai",
         )
     except Exception as exc:
+        if acquired_session is not None and acquired_session.id is not None:
+            try:
+                await database.session_state.update_by_id(
+                    acquired_session.id,
+                    {"processing": False},
+                )
+            except Exception:
+                logger.exception(
+                    "workflow_b_failed_to_release_processing_latch",
+                    sessionId=acquired_session.id,
+                )
+        logger.exception(
+            "workflow_b_failed",
+            sessionId=acquired_session.id if acquired_session is not None else None,
+            trace=trace.snapshot(outcome="failed"),
+        )
         raise DatabaseError("workflow b processing failed") from exc

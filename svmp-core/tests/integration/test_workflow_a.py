@@ -159,6 +159,7 @@ async def test_workflow_a_creates_a_new_session_for_first_message() -> None:
     assert session.debounce_expires_at == now + timedelta(milliseconds=2500)
     assert session.provider == "normalized"
     assert session.processing is False
+    assert session.escalate is False
     assert session.provider == "normalized"
     assert session.context == []
 
@@ -212,6 +213,7 @@ async def test_workflow_a_appends_follow_up_message_and_resets_debounce() -> Non
     assert updated.provider == "normalized"
     assert updated.status == "open"
     assert updated.processing is False
+    assert updated.escalate is False
     assert updated.context == []
 
 
@@ -386,3 +388,48 @@ async def test_workflow_a_updates_provider_from_new_inbound_channel() -> None:
 
     assert updated.id == created.id
     assert updated.provider == "meta"
+
+
+@pytest.mark.asyncio
+async def test_workflow_a_preserves_existing_escalate_flag() -> None:
+    """New inbound messages should not clear the session's escalate flag."""
+
+    database = InMemoryDatabase()
+    first_now = datetime(2026, 3, 30, 10, 0, tzinfo=timezone.utc)
+    second_now = first_now + timedelta(minutes=1)
+
+    created = await run_workflow_a(
+        database,
+        WebhookPayload(
+            tenantId="Niyomilan",
+            clientId="whatsapp",
+            userId="9845891194",
+            text="hi",
+        ),
+        settings=_settings(),
+        now=first_now,
+    )
+
+    seeded = await database.session_state.update_by_id(
+        created.id,
+        {"escalate": True, "processing": True},
+    )
+    assert seeded is not None
+    assert seeded.escalate is True
+
+    updated = await run_workflow_a(
+        database,
+        WebhookPayload(
+            tenantId="Niyomilan",
+            clientId="whatsapp",
+            userId="9845891194",
+            text="still there?",
+        ),
+        settings=_settings(),
+        now=second_now,
+    )
+
+    assert updated.id == created.id
+    assert updated.escalate is True
+    assert updated.processing is False
+    assert [message.text for message in updated.messages] == ["hi", "still there?"]

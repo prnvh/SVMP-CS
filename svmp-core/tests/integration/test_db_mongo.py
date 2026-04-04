@@ -6,6 +6,7 @@ from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from pymongo.errors import OperationFailure
 
 from svmp_core.config import Settings
 from svmp_core.db.mongo import MongoDatabase
@@ -45,8 +46,24 @@ class FakeCollection:
         self._counter = 0
 
     async def create_index(self, keys, **kwargs):
-        self.indexes.append({"keys": list(keys), "kwargs": kwargs})
+        normalized_keys = list(keys)
+        index_name = kwargs.get("name", f"index_{len(self.indexes) + 1}")
+        for existing in self.indexes:
+            if existing["kwargs"].get("name") != index_name:
+                continue
+            if existing["keys"] == normalized_keys and existing["kwargs"] == kwargs:
+                return index_name
+            raise OperationFailure(
+                "index key specs conflict",
+                code=86,
+                details={"codeName": "IndexKeySpecsConflict"},
+            )
+
+        self.indexes.append({"keys": normalized_keys, "kwargs": kwargs})
         return kwargs.get("name", f"index_{len(self.indexes)}")
+
+    async def drop_index(self, name: str) -> None:
+        self.indexes = [index for index in self.indexes if index["kwargs"].get("name") != name]
 
     async def insert_one(self, document: dict) -> FakeInsertResult:
         stored = deepcopy(document)
@@ -192,6 +209,11 @@ async def test_connect_initializes_repositories_and_indexes(monkeypatch: pytest.
 
     fake_db = fake_client["svmp_test"]
     assert len(fake_db["session_state"].indexes) == 2
+    assert fake_db["session_state"].indexes[1]["keys"] == [
+        ("processing", 1),
+        ("escalate", 1),
+        ("debounceExpiresAt", 1),
+    ]
     assert len(fake_db["knowledge_base"].indexes) == 1
     assert len(fake_db["governance_logs"].indexes) == 1
     assert len(fake_db["tenants"].indexes) == 1
@@ -209,6 +231,43 @@ async def test_connect_initializes_repositories_and_indexes(monkeypatch: pytest.
     await database.disconnect()
 
     assert fake_client.closed is True
+
+
+@pytest.mark.asyncio
+async def test_connect_replaces_stale_ready_session_index(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Startup should replace an older same-name ready-session index with the new key shape."""
+
+    fake_client = FakeMotorClient()
+    fake_db = fake_client["svmp_test"]
+    fake_db["session_state"].indexes.append(
+        {
+            "keys": [("processing", 1), ("debounceExpiresAt", 1)],
+            "kwargs": {"name": "session_ready_lookup"},
+        }
+    )
+    captured: dict[str, str] = {}
+
+    def fake_client_factory(uri: str) -> FakeMotorClient:
+        captured["uri"] = uri
+        return fake_client
+
+    monkeypatch.setattr("svmp_core.db.mongo.AsyncIOMotorClient", fake_client_factory)
+
+    database = MongoDatabase(settings=_build_settings())
+
+    await database.connect()
+
+    assert captured["uri"] == "mongodb://unit-test"
+    ready_index = next(
+        index
+        for index in fake_db["session_state"].indexes
+        if index["kwargs"].get("name") == "session_ready_lookup"
+    )
+    assert ready_index["keys"] == [
+        ("processing", 1),
+        ("escalate", 1),
+        ("debounceExpiresAt", 1),
+    ]
 
 
 @pytest.mark.asyncio
@@ -259,6 +318,69 @@ async def test_session_repository_round_trip_and_ready_acquisition() -> None:
     assert acquired is not None
     assert acquired.id == created.id
     assert acquired.processing is True
+    assert acquired.debounce_expires_at.tzinfo == timezone.utc
+
+
+@pytest.mark.asyncio
+async def test_session_repository_does_not_acquire_escalated_sessions() -> None:
+    """Ready-session acquisition should ignore sessions already marked escalated."""
+
+    fake_client = FakeMotorClient()
+    database = MongoDatabase(settings=_build_settings(), client=fake_client)
+    await database.connect()
+
+    now = datetime.now(timezone.utc)
+    created = await database.session_state.create(
+        SessionState(
+            tenant_id="Niyomilan",
+            client_id="whatsapp",
+            user_id="9845891194",
+            escalate=True,
+            debounce_expires_at=now - timedelta(seconds=1),
+        )
+    )
+
+    acquired = await database.session_state.acquire_ready_session(now)
+
+    assert acquired is None
+
+    stored = await database.session_state.get_by_identity("Niyomilan", "whatsapp", "9845891194")
+    assert stored is not None
+    assert stored.id == created.id
+    assert stored.escalate is True
+
+
+@pytest.mark.asyncio
+async def test_session_repository_acquires_legacy_session_without_escalate_field() -> None:
+    """Ready-session acquisition should still work for older docs missing the escalate field."""
+
+    fake_client = FakeMotorClient()
+    database = MongoDatabase(settings=_build_settings(), client=fake_client)
+    await database.connect()
+
+    now = datetime.now(timezone.utc)
+    fake_db = fake_client["svmp_test"]
+    fake_db["session_state"].documents.append(
+        {
+            "_id": "legacy-session",
+            "tenantId": "Niyomilan",
+            "clientId": "whatsapp",
+            "userId": "9845891194",
+            "status": "open",
+            "processing": False,
+            "messages": [],
+            "createdAt": now - timedelta(minutes=5),
+            "updatedAt": now - timedelta(minutes=5),
+            "debounceExpiresAt": now - timedelta(seconds=1),
+        }
+    )
+
+    acquired = await database.session_state.acquire_ready_session(now)
+
+    assert acquired is not None
+    assert acquired.id == "legacy-session"
+    assert acquired.processing is True
+    assert acquired.escalate is False
 
 
 @pytest.mark.asyncio

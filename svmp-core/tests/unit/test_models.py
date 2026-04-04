@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from svmp_core.models import GovernanceDecision, GovernanceLog, KnowledgeEntry, SessionState, WebhookPayload
 
 
@@ -16,6 +18,7 @@ def test_session_state_accepts_internal_field_names() -> None:
 
     assert session.status == "open"
     assert session.processing is False
+    assert session.escalate is False
     assert session.messages == []
 
 
@@ -32,7 +35,27 @@ def test_session_state_accepts_mongo_aliases() -> None:
     assert session.tenant_id == "Niyomilan"
     assert session.client_id == "whatsapp"
     assert session.user_id == "9845891194"
+    assert session.escalate is False
     assert session.messages[0].text == "hi"
+
+
+def test_session_state_normalizes_naive_datetimes_to_utc() -> None:
+    """Naive datetimes loaded from Mongo should be treated as UTC."""
+
+    session = SessionState(
+        tenantId="Niyomilan",
+        clientId="whatsapp",
+        userId="9845891194",
+        messages=[{"text": "hi", "at": datetime(2026, 4, 4, 16, 11, 17)}],
+        createdAt=datetime(2026, 4, 4, 16, 11, 17),
+        updatedAt=datetime(2026, 4, 4, 16, 11, 18),
+        debounceExpiresAt=datetime(2026, 4, 4, 16, 11, 19),
+    )
+
+    assert session.messages[0].at == datetime(2026, 4, 4, 16, 11, 17, tzinfo=timezone.utc)
+    assert session.created_at == datetime(2026, 4, 4, 16, 11, 17, tzinfo=timezone.utc)
+    assert session.updated_at == datetime(2026, 4, 4, 16, 11, 18, tzinfo=timezone.utc)
+    assert session.debounce_expires_at == datetime(2026, 4, 4, 16, 11, 19, tzinfo=timezone.utc)
 
 
 def test_knowledge_entry_defaults_and_alias_dump() -> None:

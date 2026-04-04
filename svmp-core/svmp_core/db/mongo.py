@@ -11,6 +11,7 @@ from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel
 from pymongo import ASCENDING, ReturnDocument
+from pymongo.errors import OperationFailure
 
 from svmp_core.config import Settings, get_settings
 from svmp_core.db.base import (
@@ -77,6 +78,20 @@ def _to_model(model_cls: type[ModelT], document: Mapping[str, Any] | None) -> Mo
     return model_cls(**normalized)
 
 
+async def _create_or_replace_named_index(collection, keys, **kwargs) -> str:
+    """Create an index and replace a stale same-name definition when needed."""
+
+    try:
+        return await collection.create_index(keys, **kwargs)
+    except OperationFailure as exc:
+        index_name = kwargs.get("name")
+        if exc.code != 86 or not isinstance(index_name, str) or not index_name.strip():
+            raise
+
+        await collection.drop_index(index_name)
+        return await collection.create_index(keys, **kwargs)
+
+
 class MongoSessionStateRepository(SessionStateRepository):
     """Mongo-backed repository for active session state."""
 
@@ -126,6 +141,7 @@ class MongoSessionStateRepository(SessionStateRepository):
             {
                 "status": "open",
                 "processing": False,
+                "escalate": {"$ne": True},
                 "debounceExpiresAt": {"$lte": now},
             },
             {"$set": {"processing": True, "updatedAt": now}},
@@ -319,30 +335,35 @@ class MongoDatabase(Database):
             raise DatabaseError("database not connected")
 
         session_collection = self._db[self._settings.MONGODB_SESSION_COLLECTION]
-        await session_collection.create_index(
+        await _create_or_replace_named_index(
+            session_collection,
             [("tenantId", ASCENDING), ("clientId", ASCENDING), ("userId", ASCENDING)],
             unique=True,
             name="session_identity_unique",
         )
-        await session_collection.create_index(
-            [("processing", ASCENDING), ("debounceExpiresAt", ASCENDING)],
+        await _create_or_replace_named_index(
+            session_collection,
+            [("processing", ASCENDING), ("escalate", ASCENDING), ("debounceExpiresAt", ASCENDING)],
             name="session_ready_lookup",
         )
 
         kb_collection = self._db[self._settings.MONGODB_KB_COLLECTION]
-        await kb_collection.create_index(
+        await _create_or_replace_named_index(
+            kb_collection,
             [("tenantId", ASCENDING), ("domainId", ASCENDING), ("active", ASCENDING)],
             name="knowledge_lookup",
         )
 
         governance_collection = self._db[self._settings.MONGODB_GOVERNANCE_COLLECTION]
-        await governance_collection.create_index(
+        await _create_or_replace_named_index(
+            governance_collection,
             [("tenantId", ASCENDING), ("timestamp", ASCENDING)],
             name="governance_tenant_timestamp",
         )
 
         tenants_collection = self._db[self._settings.MONGODB_TENANTS_COLLECTION]
-        await tenants_collection.create_index(
+        await _create_or_replace_named_index(
+            tenants_collection,
             [("tenantId", ASCENDING)],
             unique=True,
             name="tenant_id_unique",
