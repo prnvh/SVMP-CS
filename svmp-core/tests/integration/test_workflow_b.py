@@ -203,10 +203,10 @@ def _ready_session(
     )
 
 
-def _tenant(*, threshold: float = 0.75) -> dict[str, Any]:
+def _tenant(*, threshold: float = 0.75, brand_voice: str | None = None) -> dict[str, Any]:
     """Build a representative tenant document."""
 
-    return {
+    tenant = {
         "tenantId": "Niyomilan",
         "domains": [
             {
@@ -218,6 +218,9 @@ def _tenant(*, threshold: float = 0.75) -> dict[str, Any]:
         ],
         "settings": {"confidenceThreshold": threshold},
     }
+    if brand_voice is not None:
+        tenant["brandVoice"] = brand_voice
+    return tenant
 
 
 @pytest.mark.asyncio
@@ -289,6 +292,59 @@ async def test_workflow_b_answers_high_confidence_informational_query(
     assert session.processing is True
     assert session.messages == []
     assert session.context == ["What do you do?"]
+
+
+@pytest.mark.asyncio
+async def test_workflow_b_applies_tenant_brand_voice_when_answering(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Configured tenant brand voice should rewrite the outbound answer."""
+
+    async def fake_match_completion(**kwargs) -> str:
+        return '{"bestIndex": 0, "similarityScore": 0.92, "reason": "candidate 0 directly answers the query"}'
+
+    async def fake_generate_customer_response(query, *, knowledge_entry, brand_voice, settings) -> str:
+        assert query == "What do you do?"
+        assert knowledge_entry is not None
+        assert knowledge_entry.answer == "We help customers."
+        assert brand_voice == "Warm, polished, and premium."
+        return "We help customers with a warm, polished, premium tone."
+
+    monkeypatch.setattr("svmp_core.workflows.workflow_b.generate_completion", fake_match_completion)
+    monkeypatch.setattr(
+        "svmp_core.workflows.workflow_b.generate_customer_response",
+        fake_generate_customer_response,
+    )
+
+    database = ProcessingDatabase(
+        sessions=[_ready_session(text="What do you do?")],
+        knowledge_entries=[
+            KnowledgeEntry(
+                _id="faq-1",
+                tenantId="Niyomilan",
+                domainId="general",
+                question="What do you do?",
+                answer="We help customers.",
+            )
+        ],
+        tenants=[_tenant(threshold=0.75, brand_voice="Warm, polished, and premium.")],
+    )
+
+    result = await run_workflow_b(
+        database,
+        settings=_settings(),
+        now=datetime(2026, 3, 30, 10, 0, tzinfo=timezone.utc),
+    )
+
+    assert result.decision == GovernanceDecision.ANSWERED
+    assert result.answer_supplied == "We help customers with a warm, polished, premium tone."
+
+    written_logs = database.governance_logs.logs
+    assert len(written_logs) == 1
+    assert written_logs[0].answer_supplied == "We help customers with a warm, polished, premium tone."
+    assert written_logs[0].metadata["brandVoiceConfigured"] is True
+    assert written_logs[0].metadata["brandVoiceApplied"] is True
+    assert written_logs[0].metadata["sourceAnswer"] == "We help customers."
 
 
 @pytest.mark.asyncio

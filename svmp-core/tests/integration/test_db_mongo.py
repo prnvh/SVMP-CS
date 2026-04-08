@@ -295,6 +295,7 @@ async def test_knowledge_governance_and_tenant_repositories() -> None:
             "_id": "tenant-1",
             "tenantId": "Niyomilan",
             "settings": {"confidenceThreshold": 0.75},
+            "brandVoice": "Warm, polished, and premium.",
             "tags": ["ecom"],
         }
     )
@@ -320,6 +321,7 @@ async def test_knowledge_governance_and_tenant_repositories() -> None:
     assert tenant is not None
     assert tenant["tenantId"] == "Niyomilan"
     assert tenant["settings"]["confidenceThreshold"] == 0.75
+    assert tenant["brandVoice"] == "Warm, polished, and premium."
 
 
 @pytest.mark.asyncio

@@ -133,4 +133,51 @@ def get_tenant_confidence_threshold(
     return float(threshold)
 
 
+def get_tenant_brand_voice(
+    tenant_document: Mapping[str, Any] | None,
+) -> str | None:
+    """Resolve an optional tenant brand voice into a prompt-safe string."""
+
+    if tenant_document is None:
+        return None
+
+    brand_voice = tenant_document.get("brandVoice")
+    if brand_voice is None:
+        return None
+
+    if isinstance(brand_voice, str):
+        normalized = brand_voice.strip()
+        return normalized or None
+
+    if isinstance(brand_voice, Mapping):
+        sections: list[str] = []
+        for key, value in brand_voice.items():
+            label = str(key).strip()
+            if not label:
+                continue
+            if isinstance(value, str):
+                normalized_value = value.strip()
+                if normalized_value:
+                    sections.append(f"{label}: {normalized_value}")
+                continue
+            if isinstance(value, (list, tuple)):
+                normalized_items = [
+                    str(item).strip()
+                    for item in value
+                    if str(item).strip()
+                ]
+                if normalized_items:
+                    sections.append(f"{label}: {', '.join(normalized_items)}")
+                continue
+            if value is not None:
+                normalized_value = str(value).strip()
+                if normalized_value:
+                    sections.append(f"{label}: {normalized_value}")
+
+        return "\n".join(sections) if sections else None
+
+    normalized = str(brand_voice).strip()
+    return normalized or None
+
+
 settings = get_settings()

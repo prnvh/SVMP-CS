@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from svmp_core.config import Settings, get_tenant_confidence_threshold
+from svmp_core.config import Settings, get_tenant_brand_voice, get_tenant_confidence_threshold
 from svmp_core.exceptions import ConfigError
 
 
@@ -129,3 +129,33 @@ def test_tenant_threshold_missing_value_fails_hard() -> None:
 
     with pytest.raises(ValueError, match="tenant confidenceThreshold missing"):
         get_tenant_confidence_threshold({"settings": {}})
+
+
+def test_tenant_brand_voice_uses_string_value() -> None:
+    """Tenant brand voice should resolve from a simple configured string."""
+
+    brand_voice = get_tenant_brand_voice(
+        {"brandVoice": "Warm, polished, concise, and premium."}
+    )
+
+    assert brand_voice == "Warm, polished, concise, and premium."
+
+
+def test_tenant_brand_voice_formats_mapping_value() -> None:
+    """Structured brand voice config should flatten into prompt-safe guidance."""
+
+    brand_voice = get_tenant_brand_voice(
+        {
+            "brandVoice": {
+                "tone": "Warm and premium",
+                "do": ["Be concise", "Sound confident"],
+                "dont": ["Use slang"],
+            }
+        }
+    )
+
+    assert brand_voice == (
+        "tone: Warm and premium\n"
+        "do: Be concise, Sound confident\n"
+        "dont: Use slang"
+    )
