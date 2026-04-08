@@ -35,17 +35,7 @@ def _register_scheduler_jobs(
     database: Database,
     settings: Settings,
 ) -> None:
-    """Attach Workflow B and Workflow C jobs to the runtime scheduler."""
-
-    if not _job_exists(scheduler, "workflow_b"):
-        scheduler.add_job(
-            run_workflow_b,
-            trigger="interval",
-            seconds=settings.WORKFLOW_B_INTERVAL_SECONDS,
-            id="workflow_b",
-            replace_existing=True,
-            kwargs={"database": database, "settings": settings},
-        )
+    """Attach recurring background jobs to the runtime scheduler."""
 
     if not _job_exists(scheduler, "workflow_c"):
         scheduler.add_job(
