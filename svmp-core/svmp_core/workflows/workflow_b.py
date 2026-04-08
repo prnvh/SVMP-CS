@@ -16,6 +16,7 @@ from svmp_core.core import (
     build_answered_log,
     build_escalated_log,
     choose_domain,
+    evaluate_red_flags,
     evaluate_similarity,
     request_escalation,
 )
@@ -635,6 +636,9 @@ async def run_workflow_b(
             ),
         }
 
+        with trace.step("workflow_b.red_flags.evaluate"):
+            red_flag_decision = evaluate_red_flags(acquired_session.messages, active_question)
+
         if acquired_session.pending_escalation and (
             acquired_session.pending_escalation_expires_at is not None
             and acquired_session.pending_escalation_expires_at <= current_time
@@ -775,6 +779,86 @@ async def run_workflow_b(
                 escalation_target=escalation.target,
                 reason=escalation.reason,
                 matcher_used="pending_escalation",
+            )
+
+        if red_flag_decision.should_escalate and red_flag_decision.reason is not None:
+            escalation = request_escalation(
+                identity,
+                combined_text,
+                reason=red_flag_decision.reason,
+                metadata={"matchedSignals": red_flag_decision.matched_signals},
+            )
+            log = build_escalated_log(
+                identity,
+                combined_text,
+                metadata=_audit_metadata(
+                    identity=identity,
+                    session=acquired_session,
+                    decision=GovernanceDecision.ESCALATED.value,
+                    latency_ms=int((perf_counter() - started_at) * 1000),
+                    reason=escalation.reason,
+                    provider_name=acquired_session.provider,
+                    threshold=None,
+                    similarity_score=None,
+                    similarity_outcome="not_evaluated",
+                    candidate_found=False,
+                    matcher_metadata={
+                        "matcherUsed": "red_flag_gate",
+                        "matcherReason": red_flag_decision.reason,
+                    },
+                    extra={
+                        "timing": {
+                            **timing_metadata,
+                            "workflow": trace.snapshot(),
+                        },
+                        "target": escalation.target.value,
+                        "activeQuestion": conversation.active_question,
+                        "activeMessages": conversation.active_messages,
+                        "context": conversation.context,
+                        "redFlags": {
+                            "triggered": True,
+                            "reason": red_flag_decision.reason,
+                            "signals": red_flag_decision.matched_signals,
+                            "bypassedFaq": red_flag_decision.bypass_faq,
+                        },
+                    },
+                ),
+                timestamp=current_time,
+            )
+            with trace.step("workflow_b.governance_logs.create"):
+                await database.governance_logs.create(log)
+            with trace.step("workflow_b.session_state.archive_processed_window"):
+                await _archive_processed_window(
+                    database,
+                    acquired_session,
+                    active_question=conversation.active_question,
+                    now=current_time,
+                    escalate=True,
+                )
+            logger.info(
+                "workflow_b_completed",
+                decision=GovernanceDecision.ESCALATED.value,
+                sessionId=acquired_session.id,
+                tenantId=identity.tenant_id,
+                clientId=identity.client_id,
+                userId=identity.user_id,
+                trace=trace.snapshot(
+                    outcome=GovernanceDecision.ESCALATED.value,
+                    messageWindow=timing_metadata["messageWindow"],
+                ),
+            )
+            return WorkflowBResult(
+                processed=True,
+                session_id=acquired_session.id,
+                decision=GovernanceDecision.ESCALATED,
+                combined_text=combined_text,
+                domain_id=None,
+                similarity_score=None,
+                answer_supplied=None,
+                outbound_send_result=None,
+                escalation_target=escalation.target,
+                reason=escalation.reason,
+                matcher_used="red_flag_gate",
             )
 
         with trace.step("workflow_b.tenants.get_by_tenant_id"):

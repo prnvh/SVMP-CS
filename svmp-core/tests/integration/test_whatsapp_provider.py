@@ -33,6 +33,31 @@ def test_twilio_provider_normalizes_form_payload() -> None:
     assert payloads[0].text == "hello from twilio"
     assert payloads[0].provider == "twilio"
     assert payloads[0].external_message_id == "SM123"
+    assert payloads[0].message_type == "text"
+
+
+def test_twilio_provider_normalizes_image_form_payload() -> None:
+    """Twilio media posts should normalize into image-style webhook payloads."""
+
+    provider = TwilioWhatsAppProvider()
+
+    payloads = provider.normalize_form_payload(
+        {
+            "MessageSid": "SM456",
+            "From": "whatsapp:+919845891194",
+            "Body": "",
+            "NumMedia": "1",
+            "MediaContentType0": "image/jpeg",
+            "MediaUrl0": "https://example.com/image.jpg",
+        },
+        tenant_id="Niyomilan",
+    )
+
+    assert len(payloads) == 1
+    assert payloads[0].message_type == "image"
+    assert payloads[0].media_type == "image/jpeg"
+    assert payloads[0].media_url == "https://example.com/image.jpg"
+    assert payloads[0].text == "[image]"
 
 
 @pytest.mark.asyncio

@@ -160,8 +160,38 @@ async def test_workflow_a_creates_a_new_session_for_first_message() -> None:
     assert session.provider == "normalized"
     assert session.processing is False
     assert session.escalate is False
+    assert session.messages[0].message_type == "text"
     assert session.provider == "normalized"
     assert session.context == []
+
+
+@pytest.mark.asyncio
+async def test_workflow_a_accepts_image_payload_without_text_body() -> None:
+    """Image payloads should be persisted even when they do not carry plain text."""
+
+    database = InMemoryDatabase()
+    now = datetime(2026, 3, 30, 10, 0, tzinfo=timezone.utc)
+
+    session = await run_workflow_a(
+        database,
+        WebhookPayload(
+            tenantId="Niyomilan",
+            clientId="whatsapp",
+            userId="9845891194",
+            text="",
+            messageType="image",
+            mediaType="image/jpeg",
+            mediaUrl="https://example.com/image.jpg",
+        ),
+        settings=_settings(),
+        now=now,
+    )
+
+    assert session.id == "session-1"
+    assert session.messages[0].text == "[image]"
+    assert session.messages[0].message_type == "image"
+    assert session.messages[0].media_type == "image/jpeg"
+    assert session.messages[0].media_url == "https://example.com/image.jpg"
 
 
 @pytest.mark.asyncio

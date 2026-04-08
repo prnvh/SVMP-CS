@@ -113,3 +113,23 @@ def test_webhook_payload_parses_normalized_alias_fields() -> None:
     assert payload.client_id == "whatsapp"
     assert payload.user_id == "9845891194"
     assert payload.text == "hi"
+
+
+def test_webhook_payload_supports_media_fields() -> None:
+    """WebhookPayload should accept optional message-type and media metadata."""
+
+    payload = WebhookPayload(
+        tenantId="Niyomilan",
+        clientId="whatsapp",
+        userId="9845891194",
+        text="",
+        messageType="image",
+        mediaType="image/jpeg",
+        mediaUrl="https://example.com/image.jpg",
+        caption="see this",
+    )
+
+    assert payload.message_type == "image"
+    assert payload.media_type == "image/jpeg"
+    assert payload.media_url == "https://example.com/image.jpg"
+    assert payload.caption == "see this"

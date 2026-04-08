@@ -119,9 +119,12 @@ class NormalizedWhatsAppProvider(WhatsAppProvider):
         tenant_id: str | None,
     ) -> list[WebhookPayload]:
         try:
-            return [WebhookPayload(**dict(payload), provider=self.name)]
+            normalized_payload = WebhookPayload(**dict(payload), provider=self.name)
         except PydanticValidationError as exc:
             raise ValidationError("invalid normalized webhook payload") from exc
+        if not normalized_payload.text.strip() and normalized_payload.message_type.strip().lower() == "text":
+            raise ValidationError("invalid normalized webhook payload")
+        return [normalized_payload]
 
     async def send_text(
         self,
@@ -200,24 +203,45 @@ class MetaWhatsAppProvider(WhatsAppProvider):
                 for message in messages:
                     if not isinstance(message, Mapping):
                         continue
-
+                    message_type = str(message.get("type", "text")).strip().lower() or "text"
                     raw_text = message.get("text", {})
                     text_body = raw_text.get("body") if isinstance(raw_text, Mapping) else None
                     from_user = message.get("from")
 
-                    if not isinstance(text_body, str) or not text_body.strip():
-                        continue
                     if not isinstance(from_user, str) or not from_user.strip():
                         continue
+
+                    if message_type == "text":
+                        if not isinstance(text_body, str) or not text_body.strip():
+                            continue
+                        normalized_messages.append(
+                            WebhookPayload(
+                                tenantId=resolved_tenant_id,
+                                clientId="whatsapp",
+                                userId=_normalize_phone_identity(from_user),
+                                text=text_body,
+                                provider=self.name,
+                                externalMessageId=message.get("id"),
+                                messageType="text",
+                            )
+                        )
+                        continue
+
+                    media_payload = message.get(message_type, {})
+                    caption = media_payload.get("caption") if isinstance(media_payload, Mapping) else None
+                    media_type = media_payload.get("mime_type") if isinstance(media_payload, Mapping) else None
 
                     normalized_messages.append(
                         WebhookPayload(
                             tenantId=resolved_tenant_id,
                             clientId="whatsapp",
                             userId=_normalize_phone_identity(from_user),
-                            text=text_body,
+                            text=caption if isinstance(caption, str) else f"[{message_type}]",
                             provider=self.name,
                             externalMessageId=message.get("id"),
+                            messageType=message_type,
+                            mediaType=media_type if isinstance(media_type, str) else message_type,
+                            caption=caption if isinstance(caption, str) and caption.strip() else None,
                         )
                     )
 
@@ -292,11 +316,37 @@ class TwilioWhatsAppProvider(WhatsAppProvider):
         resolved_tenant_id = _require_non_blank(tenant_id, "tenantId")
         body = payload.get("Body")
         from_user = payload.get("From")
+        num_media = payload.get("NumMedia")
+
+        if not isinstance(from_user, str) or not from_user.strip():
+            raise ValidationError("Twilio webhook From is required")
+
+        media_count = 0
+        if isinstance(num_media, str) and num_media.strip().isdigit():
+            media_count = int(num_media.strip())
+
+        if media_count > 0:
+            media_type = payload.get("MediaContentType0")
+            media_url = payload.get("MediaUrl0")
+            normalized_media_type = "image" if isinstance(media_type, str) and media_type.lower().startswith("image/") else "media"
+            caption = body.strip() if isinstance(body, str) and body.strip() else None
+            return [
+                WebhookPayload(
+                    tenantId=resolved_tenant_id,
+                    clientId="whatsapp",
+                    userId=_normalize_phone_identity(from_user),
+                    text=caption or f"[{normalized_media_type}]",
+                    provider=self.name,
+                    externalMessageId=payload.get("MessageSid"),
+                    messageType=normalized_media_type,
+                    mediaType=media_type if isinstance(media_type, str) and media_type.strip() else normalized_media_type,
+                    mediaUrl=media_url if isinstance(media_url, str) and media_url.strip() else None,
+                    caption=caption,
+                )
+            ]
 
         if not isinstance(body, str) or not body.strip():
             raise ValidationError("Twilio webhook Body is required")
-        if not isinstance(from_user, str) or not from_user.strip():
-            raise ValidationError("Twilio webhook From is required")
 
         return [
             WebhookPayload(
@@ -306,6 +356,7 @@ class TwilioWhatsAppProvider(WhatsAppProvider):
                 text=body,
                 provider=self.name,
                 externalMessageId=payload.get("MessageSid"),
+                messageType="text",
             )
         ]
 

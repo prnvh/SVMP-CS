@@ -437,6 +437,106 @@ async def test_workflow_b_skips_sessions_that_have_already_been_escalated() -> N
 
 
 @pytest.mark.asyncio
+async def test_workflow_b_escalates_wrong_answer_red_flag_before_openai(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Wrong-answer reports should bypass FAQ matching and escalate immediately."""
+
+    async def fail_generate_completion(**kwargs) -> str:
+        raise AssertionError("OpenAI should not be called for red-flag escalation")
+
+    monkeypatch.setattr("svmp_core.workflows.workflow_b.generate_completion", fail_generate_completion)
+
+    database = ProcessingDatabase(
+        sessions=[_ready_session(text="That is the wrong answer")],
+        knowledge_entries=[],
+        tenants=[_tenant(threshold=0.75)],
+    )
+
+    result = await run_workflow_b(
+        database,
+        settings=_settings(),
+        now=datetime(2026, 3, 30, 10, 0, tzinfo=timezone.utc),
+    )
+
+    assert result.processed is True
+    assert result.decision == GovernanceDecision.ESCALATED
+    assert result.matcher_used == "red_flag_gate"
+    assert result.reason == "wrong_answer_reported"
+    assert database.governance_logs.logs[0].metadata["redFlags"]["reason"] == "wrong_answer_reported"
+    assert database.governance_logs.logs[0].metadata["matcherUsed"] == "red_flag_gate"
+
+
+@pytest.mark.asyncio
+async def test_workflow_b_escalates_profanity_red_flag_before_openai(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Profanity should bypass FAQ matching and escalate immediately."""
+
+    async def fail_generate_completion(**kwargs) -> str:
+        raise AssertionError("OpenAI should not be called for red-flag escalation")
+
+    monkeypatch.setattr("svmp_core.workflows.workflow_b.generate_completion", fail_generate_completion)
+
+    database = ProcessingDatabase(
+        sessions=[_ready_session(text="This is fucking useless")],
+        knowledge_entries=[],
+        tenants=[_tenant(threshold=0.75)],
+    )
+
+    result = await run_workflow_b(
+        database,
+        settings=_settings(),
+        now=datetime(2026, 3, 30, 10, 0, tzinfo=timezone.utc),
+    )
+
+    assert result.processed is True
+    assert result.decision == GovernanceDecision.ESCALATED
+    assert result.matcher_used == "red_flag_gate"
+    assert result.reason == "profanity_detected"
+    assert database.governance_logs.logs[0].metadata["redFlags"]["reason"] == "profanity_detected"
+
+
+@pytest.mark.asyncio
+async def test_workflow_b_escalates_image_red_flag_before_openai(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Image messages should bypass FAQ matching and escalate immediately."""
+
+    async def fail_generate_completion(**kwargs) -> str:
+        raise AssertionError("OpenAI should not be called for red-flag escalation")
+
+    monkeypatch.setattr("svmp_core.workflows.workflow_b.generate_completion", fail_generate_completion)
+
+    image_session = _ready_session(text="[image]").model_copy(deep=True)
+    image_session.messages[0] = MessageItem(
+        text="[image]",
+        messageType="image",
+        mediaType="image/jpeg",
+        mediaUrl="https://example.com/image.jpg",
+        at=datetime(2026, 3, 30, 9, 55, tzinfo=timezone.utc),
+    )
+
+    database = ProcessingDatabase(
+        sessions=[image_session],
+        knowledge_entries=[],
+        tenants=[_tenant(threshold=0.75)],
+    )
+
+    result = await run_workflow_b(
+        database,
+        settings=_settings(),
+        now=datetime(2026, 3, 30, 10, 0, tzinfo=timezone.utc),
+    )
+
+    assert result.processed is True
+    assert result.decision == GovernanceDecision.ESCALATED
+    assert result.matcher_used == "red_flag_gate"
+    assert result.reason == "image_received"
+    assert database.governance_logs.logs[0].metadata["redFlags"]["reason"] == "image_received"
+
+
+@pytest.mark.asyncio
 async def test_workflow_b_restarts_debounce_if_new_message_arrives_during_pending_escalation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

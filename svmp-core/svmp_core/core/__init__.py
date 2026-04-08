@@ -14,6 +14,7 @@ from svmp_core.core.governance import (
     build_governance_log,
 )
 from svmp_core.core.identity_frame import IdentityFrame
+from svmp_core.core.red_flags import RedFlagDecision, evaluate_red_flags
 from svmp_core.core.response_gen import generate_customer_response
 from svmp_core.core.similarity_gate import SimilarityDecision, SimilarityOutcome, evaluate_similarity
 
@@ -29,7 +30,9 @@ __all__ = [
     "build_escalated_log",
     "build_governance_log",
     "choose_domain",
+    "evaluate_red_flags",
     "evaluate_similarity",
     "generate_customer_response",
     "request_escalation",
+    "RedFlagDecision",
 ]

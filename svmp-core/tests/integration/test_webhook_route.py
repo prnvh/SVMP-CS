@@ -289,6 +289,35 @@ def test_webhook_post_normalizes_twilio_form_payload() -> None:
 
     session = database._session_state._sessions["session-1"]
     assert session.provider == "twilio"
+    assert session.messages[0].message_type == "text"
+
+
+def test_webhook_post_normalizes_twilio_image_payload() -> None:
+    """Twilio media posts should persist as image messages through the route."""
+
+    client, database = _build_client()
+
+    response = client.post(
+        "/webhook",
+        headers={"X-SVMP-Provider": "twilio"},
+        data={
+            "MessageSid": "SM456",
+            "AccountSid": "AC123",
+            "To": "whatsapp:+14155238886",
+            "From": "whatsapp:+919845891194",
+            "Body": "",
+            "NumMedia": "1",
+            "MediaContentType0": "image/jpeg",
+            "MediaUrl0": "https://example.com/image.jpg",
+        },
+    )
+
+    assert response.status_code == 200
+    session = database._session_state._sessions["session-1"]
+    assert session.provider == "twilio"
+    assert session.messages[0].message_type == "image"
+    assert session.messages[0].media_type == "image/jpeg"
+    assert session.messages[0].media_url == "https://example.com/image.jpg"
 
 
 def test_webhook_post_rejects_provider_payload_without_resolvable_tenant() -> None:

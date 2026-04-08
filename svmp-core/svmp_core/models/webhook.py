@@ -15,9 +15,13 @@ class WebhookPayload(BaseModel):
     tenant_id: str = Field(alias="tenantId")
     client_id: str = Field(alias="clientId")
     user_id: str = Field(alias="userId")
-    text: str
+    text: str = ""
     provider: str = "normalized"
     external_message_id: str | None = Field(default=None, alias="externalMessageId")
+    message_type: str = Field(default="text", alias="messageType")
+    media_type: str | None = Field(default=None, alias="mediaType")
+    media_url: str | None = Field(default=None, alias="mediaUrl")
+    caption: str | None = None
 
 
 class OutboundTextMessage(BaseModel):

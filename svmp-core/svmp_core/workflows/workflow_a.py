@@ -35,7 +35,12 @@ async def run_workflow_a(
     runtime_settings = settings or get_settings()
     current_time = now or _utcnow()
     trace = LatencyTrace("workflow_a", started_at=current_time)
+    message_type = payload.message_type.strip().lower() if isinstance(payload.message_type, str) and payload.message_type.strip() else "text"
     normalized_text = payload.text.strip()
+    normalized_caption = payload.caption.strip() if isinstance(payload.caption, str) and payload.caption.strip() else None
+
+    if not normalized_text and message_type != "text":
+        normalized_text = normalized_caption or f"[{message_type}]"
 
     if not normalized_text:
         raise ValidationError("inbound text must not be blank")
@@ -55,7 +60,14 @@ async def run_workflow_a(
         raise ValidationError("invalid inbound identity") from exc
 
     debounce_expires_at = current_time + timedelta(milliseconds=runtime_settings.DEBOUNCE_MS)
-    new_message = MessageItem(text=normalized_text, at=current_time)
+    new_message = MessageItem(
+        text=normalized_text,
+        message_type=message_type,
+        media_type=payload.media_type.strip() if isinstance(payload.media_type, str) and payload.media_type.strip() else None,
+        media_url=payload.media_url.strip() if isinstance(payload.media_url, str) and payload.media_url.strip() else None,
+        caption=normalized_caption,
+        at=current_time,
+    )
 
     try:
         with trace.step("workflow_a.session_state.get_by_identity"):

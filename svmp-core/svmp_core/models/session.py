@@ -28,6 +28,10 @@ class MessageItem(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
     text: str
+    message_type: str = Field(default="text", alias="messageType")
+    media_type: str | None = Field(default=None, alias="mediaType")
+    media_url: str | None = Field(default=None, alias="mediaUrl")
+    caption: str | None = None
     at: datetime = Field(default_factory=_utcnow)
 
     @field_validator("at")
