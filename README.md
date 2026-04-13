@@ -55,6 +55,8 @@ The near-term goal is to:
 
 Detailed setup and demo instructions live in [`docs/demo_run_notes.md`](docs/demo_run_notes.md).
 
+Production deploys should track the latest GitHub head together with the active Vercel environment configuration.
+
 ## Quick Validation
 
 From the repo root, these commands give the fastest proof that the current demoable core is wired correctly:
