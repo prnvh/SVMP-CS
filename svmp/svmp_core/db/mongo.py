@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from datetime import datetime, timedelta
@@ -10,7 +11,7 @@ from typing import Any, TypeVar
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel
-from pymongo import ASCENDING, ReturnDocument
+from pymongo import ASCENDING, DESCENDING, ReturnDocument
 
 from svmp_core.config import Settings, get_settings
 from svmp_core.db.base import (
@@ -75,6 +76,18 @@ def _to_model(model_cls: type[ModelT], document: Mapping[str, Any] | None) -> Mo
     if "_id" in normalized:
         normalized["_id"] = _serialize_id(normalized["_id"])
     return model_cls(**normalized)
+
+
+def _serialize_document(value: Any) -> Any:
+    """Recursively convert Mongo-specific values in arbitrary documents."""
+
+    if isinstance(value, ObjectId):
+        return str(value)
+    if isinstance(value, Mapping):
+        return {key: _serialize_document(item) for key, item in value.items()}
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return [_serialize_document(item) for item in value]
+    return value
 
 
 class MongoSessionStateRepository(SessionStateRepository):
@@ -149,6 +162,20 @@ class MongoSessionStateRepository(SessionStateRepository):
         result = await self._collection.delete_many({"updatedAt": {"$lt": before}})
         return result.deleted_count
 
+    async def list_by_tenant(
+        self,
+        tenant_id: str,
+        *,
+        limit: int = 50,
+    ) -> list[SessionState]:
+        bounded_limit = max(1, min(limit, 100))
+        cursor = self._collection.find({"tenantId": tenant_id}).sort(
+            "updatedAt",
+            DESCENDING,
+        )
+        documents = await cursor.to_list(length=bounded_limit)
+        return [_to_model(SessionState, document) for document in documents if document is not None]
+
 
 class MongoKnowledgeBaseRepository(KnowledgeBaseRepository):
     """Mongo-backed repository for knowledge-base entries."""
@@ -171,6 +198,33 @@ class MongoKnowledgeBaseRepository(KnowledgeBaseRepository):
         documents = await cursor.to_list(length=None)
         return [_to_model(KnowledgeEntry, document) for document in documents if document is not None]
 
+    async def list_by_tenant(
+        self,
+        tenant_id: str,
+        *,
+        active: bool | None = None,
+        search: str | None = None,
+        limit: int = 100,
+    ) -> list[KnowledgeEntry]:
+        bounded_limit = max(1, min(limit, 250))
+        query: dict[str, Any] = {"tenantId": tenant_id}
+        if active is not None:
+            query["active"] = active
+
+        normalized_search = search.strip() if isinstance(search, str) else ""
+        if normalized_search:
+            escaped = re.escape(normalized_search)
+            query["$or"] = [
+                {"question": {"$regex": escaped, "$options": "i"}},
+                {"answer": {"$regex": escaped, "$options": "i"}},
+                {"tags": {"$regex": escaped, "$options": "i"}},
+                {"domainId": {"$regex": escaped, "$options": "i"}},
+            ]
+
+        cursor = self._collection.find(query).sort("updatedAt", DESCENDING)
+        documents = await cursor.to_list(length=bounded_limit)
+        return [_to_model(KnowledgeEntry, document) for document in documents if document is not None]
+
 
 class MongoGovernanceLogRepository(GovernanceLogRepository):
     """Mongo-backed repository for immutable governance logs."""
@@ -184,6 +238,36 @@ class MongoGovernanceLogRepository(GovernanceLogRepository):
         payload["_id"] = _serialize_id(result.inserted_id)
         return GovernanceLog(**payload)
 
+    async def list_by_tenant(
+        self,
+        tenant_id: str,
+        *,
+        limit: int = 100,
+    ) -> list[GovernanceLog]:
+        bounded_limit = max(1, min(limit, 250))
+        cursor = self._collection.find({"tenantId": tenant_id}).sort(
+            "timestamp",
+            DESCENDING,
+        )
+        documents = await cursor.to_list(length=bounded_limit)
+        return [_to_model(GovernanceLog, document) for document in documents if document is not None]
+
+    async def count_by_decision(self, tenant_id: str) -> Mapping[str, int]:
+        cursor = self._collection.aggregate(
+            [
+                {"$match": {"tenantId": tenant_id}},
+                {"$group": {"_id": "$decision", "count": {"$sum": 1}}},
+            ]
+        )
+        rows = await cursor.to_list(length=None)
+        counts: dict[str, int] = {}
+        for row in rows:
+            decision = row.get("_id") if isinstance(row, Mapping) else None
+            count = row.get("count") if isinstance(row, Mapping) else None
+            if isinstance(decision, str) and isinstance(count, int):
+                counts[decision] = count
+        return counts
+
 
 class MongoTenantRepository(TenantRepository):
     """Mongo-backed repository for tenant metadata."""
@@ -194,10 +278,12 @@ class MongoTenantRepository(TenantRepository):
         *,
         memberships_collection=None,
         billing_subscriptions_collection=None,
+        integration_status_collection=None,
     ) -> None:
         self._collection = collection
         self._memberships_collection = memberships_collection
         self._billing_subscriptions_collection = billing_subscriptions_collection
+        self._integration_status_collection = integration_status_collection
 
     async def get_by_tenant_id(self, tenant_id: str) -> Mapping[str, Any] | None:
         document = await self._collection.find_one({"tenantId": tenant_id})
@@ -315,6 +401,21 @@ class MongoTenantRepository(TenantRepository):
             "billing": dict(tenant_billing),
         }
 
+    async def list_integration_status(
+        self,
+        tenant_id: str,
+    ) -> list[Mapping[str, Any]]:
+        if self._integration_status_collection is None:
+            return []
+
+        cursor = self._integration_status_collection.find({"tenantId": tenant_id})
+        documents = await cursor.to_list(length=50)
+        return [
+            _serialize_document(document)
+            for document in documents
+            if isinstance(document, Mapping)
+        ]
+
 
 class MongoDatabase(Database):
     """Top-level Mongo database adapter that wires all repositories."""
@@ -381,6 +482,9 @@ class MongoDatabase(Database):
                 ],
                 billing_subscriptions_collection=self._db[
                     self._settings.MONGODB_BILLING_SUBSCRIPTIONS_COLLECTION
+                ],
+                integration_status_collection=self._db[
+                    self._settings.MONGODB_INTEGRATION_STATUS_COLLECTION
                 ],
             )
         except Exception as exc:  # pragma: no cover - defensive wrapper

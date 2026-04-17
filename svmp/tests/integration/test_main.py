@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from copy import deepcopy
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi.testclient import TestClient
@@ -17,15 +18,18 @@ from svmp_core.db.base import (
     TenantRepository,
 )
 from svmp_core.main import create_app
-from svmp_core.models import GovernanceLog, KnowledgeEntry, SessionState
+from svmp_core.models import GovernanceDecision, GovernanceLog, KnowledgeEntry, MessageItem, SessionState
 
 
 class InMemorySessionStateRepository(SessionStateRepository):
     """Small session repo so the webhook route can run inside app tests."""
 
-    def __init__(self) -> None:
+    def __init__(self, sessions: list[SessionState] | None = None) -> None:
         self._sessions: dict[str, SessionState] = {}
         self._counter = 0
+        for session in sessions or []:
+            if session.id is not None:
+                self._sessions[session.id] = session.model_copy(deep=True)
 
     async def get_by_identity(
         self,
@@ -67,26 +71,103 @@ class InMemorySessionStateRepository(SessionStateRepository):
     async def delete_stale_sessions(self, before):
         return 0
 
+    async def list_by_tenant(
+        self,
+        tenant_id: str,
+        *,
+        limit: int = 50,
+    ) -> list[SessionState]:
+        sessions = [
+            session.model_copy(deep=True)
+            for session in self._sessions.values()
+            if session.tenant_id == tenant_id
+        ]
+        return sorted(sessions, key=lambda session: session.updated_at, reverse=True)[:limit]
+
 
 class StubKnowledgeRepository(KnowledgeBaseRepository):
+    def __init__(self, entries: list[KnowledgeEntry] | None = None) -> None:
+        self._entries = [entry.model_copy(deep=True) for entry in entries or []]
+
     async def list_active_by_tenant_and_domain(
         self,
         tenant_id: str,
         domain_id: str,
     ) -> list[KnowledgeEntry]:
-        return []
+        return [
+            entry.model_copy(deep=True)
+            for entry in self._entries
+            if entry.tenant_id == tenant_id and entry.domain_id == domain_id and entry.active
+        ]
+
+    async def list_by_tenant(
+        self,
+        tenant_id: str,
+        *,
+        active: bool | None = None,
+        search: str | None = None,
+        limit: int = 100,
+    ) -> list[KnowledgeEntry]:
+        entries = [entry for entry in self._entries if entry.tenant_id == tenant_id]
+        if active is not None:
+            entries = [entry for entry in entries if entry.active is active]
+        if search:
+            normalized = search.lower()
+            entries = [
+                entry
+                for entry in entries
+                if normalized in entry.question.lower()
+                or normalized in entry.answer.lower()
+                or normalized in entry.domain_id.lower()
+                or any(normalized in tag.lower() for tag in entry.tags)
+            ]
+        return [entry.model_copy(deep=True) for entry in entries[:limit]]
 
 
 class StubGovernanceRepository(GovernanceLogRepository):
+    def __init__(self, logs: list[GovernanceLog] | None = None) -> None:
+        self._logs = [log.model_copy(deep=True) for log in logs or []]
+
     async def create(self, log: GovernanceLog) -> GovernanceLog:
+        self._logs.append(log.model_copy(deep=True))
         return log
+
+    async def list_by_tenant(
+        self,
+        tenant_id: str,
+        *,
+        limit: int = 100,
+    ) -> list[GovernanceLog]:
+        logs = [
+            log.model_copy(deep=True)
+            for log in self._logs
+            if log.tenant_id == tenant_id
+        ]
+        return sorted(logs, key=lambda log: log.timestamp, reverse=True)[:limit]
+
+    async def count_by_decision(self, tenant_id: str) -> Mapping[str, int]:
+        counts: dict[str, int] = {}
+        for log in self._logs:
+            if log.tenant_id != tenant_id:
+                continue
+            counts[log.decision.value] = counts.get(log.decision.value, 0) + 1
+        return counts
 
 
 class StubTenantRepository(TenantRepository):
-    def __init__(self, dashboard_context: Mapping[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        dashboard_context: Mapping[str, Any] | None = None,
+        tenant_document: Mapping[str, Any] | None = None,
+        integrations: list[Mapping[str, Any]] | None = None,
+    ) -> None:
         self._dashboard_context = deepcopy(dict(dashboard_context)) if dashboard_context else None
+        self._tenant_document = deepcopy(dict(tenant_document)) if tenant_document else None
+        self._integrations = [deepcopy(dict(item)) for item in integrations or []]
 
     async def get_by_tenant_id(self, tenant_id: str) -> Mapping[str, Any] | None:
+        if self._tenant_document and self._tenant_document.get("tenantId") == tenant_id:
+            return deepcopy(self._tenant_document)
         return None
 
     async def resolve_dashboard_tenant_context(
@@ -97,16 +178,33 @@ class StubTenantRepository(TenantRepository):
     ) -> Mapping[str, Any] | None:
         return deepcopy(self._dashboard_context) if self._dashboard_context else None
 
+    async def list_integration_status(
+        self,
+        tenant_id: str,
+    ) -> list[Mapping[str, Any]]:
+        return [
+            deepcopy(item)
+            for item in self._integrations
+            if item.get("tenantId") == tenant_id
+        ]
+
 
 class TestDatabase(Database):
     """Database stub with lifecycle flags for app-factory tests."""
 
     __test__ = False
 
-    def __init__(self, *, tenant_repo: TenantRepository | None = None) -> None:
-        self._session_state = InMemorySessionStateRepository()
-        self._knowledge_base = StubKnowledgeRepository()
-        self._governance_logs = StubGovernanceRepository()
+    def __init__(
+        self,
+        *,
+        tenant_repo: TenantRepository | None = None,
+        session_repo: SessionStateRepository | None = None,
+        knowledge_repo: KnowledgeBaseRepository | None = None,
+        governance_repo: GovernanceLogRepository | None = None,
+    ) -> None:
+        self._session_state = session_repo or InMemorySessionStateRepository()
+        self._knowledge_base = knowledge_repo or StubKnowledgeRepository()
+        self._governance_logs = governance_repo or StubGovernanceRepository()
         self._tenants = tenant_repo or StubTenantRepository()
         self.connected = False
         self.disconnected = False
@@ -369,3 +467,188 @@ def test_dashboard_me_limits_inactive_subscription_to_billing_actions() -> None:
             "billing.checkout",
             "billing.portal",
         ]
+
+
+def test_dashboard_read_endpoints_return_resolved_tenant_data() -> None:
+    """Dashboard read APIs should use the resolved tenant for every query."""
+
+    now = datetime(2026, 4, 17, 8, 0, tzinfo=timezone.utc)
+    tenant_repo = StubTenantRepository(
+        {
+            "tenantId": "stay",
+            "tenantName": "Stay Parfums",
+            "role": "owner",
+            "subscriptionStatus": "active",
+        },
+        tenant_document={
+            "tenantId": "stay",
+            "tenantName": "Stay Parfums",
+            "websiteUrl": "https://stayparfums.com",
+            "industry": "Fragrance",
+            "supportEmail": "support@stayparfums.com",
+            "brandVoice": {
+                "tone": "Warm, polished, premium",
+                "use": ["concise"],
+                "avoid": ["overpromising"],
+            },
+            "settings": {"confidenceThreshold": 0.75},
+        },
+        integrations=[
+            {
+                "tenantId": "stay",
+                "provider": "whatsapp",
+                "status": "connected",
+                "health": "healthy",
+                "accessToken": "secret-token",
+            }
+        ],
+    )
+    database = TestDatabase(
+        tenant_repo=tenant_repo,
+        session_repo=InMemorySessionStateRepository(
+            [
+                SessionState(
+                    _id="session-1",
+                    tenantId="stay",
+                    clientId="whatsapp",
+                    userId="9845891194",
+                    provider="meta",
+                    messages=[MessageItem(text="Do you have free shipping?", at=now)],
+                    createdAt=now,
+                    updatedAt=now,
+                    debounceExpiresAt=now,
+                )
+            ]
+        ),
+        knowledge_repo=StubKnowledgeRepository(
+            [
+                KnowledgeEntry(
+                    _id="faq-shipping",
+                    tenantId="stay",
+                    domainId="general",
+                    question="Do you have free shipping?",
+                    answer="Yes, shipping is free.",
+                    tags=["shipping"],
+                    active=True,
+                )
+            ]
+        ),
+        governance_repo=StubGovernanceRepository(
+            [
+                GovernanceLog(
+                    _id="log-1",
+                    tenantId="stay",
+                    clientId="whatsapp",
+                    userId="9845891194",
+                    decision=GovernanceDecision.ANSWERED,
+                    similarityScore=0.92,
+                    combinedText="Do you have free shipping?",
+                    answerSupplied="Yes, shipping is free.",
+                    timestamp=now,
+                    metadata={"matchedQuestion": "Do you have free shipping?"},
+                )
+            ]
+        ),
+    )
+    app = create_app(
+        settings=Settings(
+            _env_file=None,
+            APP_NAME="SVMP-Dashboard-Read-Test",
+            MONGODB_URI="mongodb://unit-test",
+            OPENAI_API_KEY="test-key",
+            WHATSAPP_PROVIDER="meta",
+            WHATSAPP_TOKEN="test-whatsapp-token",
+            WHATSAPP_PHONE_NUMBER_ID="1234567890",
+            WHATSAPP_VERIFY_TOKEN="verify-me",
+            META_APP_SECRET="app-secret",
+            DASHBOARD_AUTH_MODE="trusted_headers",
+            WORKFLOW_B_INTERVAL_SECONDS=1,
+            WORKFLOW_C_INTERVAL_HOURS=24,
+        ),
+        database=database,
+        scheduler=SchedulerStub(),
+    )
+    headers = {
+        "X-SVMP-User-Id": "user_123",
+        "X-SVMP-Organization-Id": "org_123",
+    }
+
+    with TestClient(app) as client:
+        tenant_response = client.get("/api/tenant", params={"tenantId": "evil"}, headers=headers)
+        overview_response = client.get("/api/overview", headers=headers)
+        sessions_response = client.get("/api/sessions", headers=headers)
+        kb_response = client.get("/api/knowledge-base", params={"search": "shipping"}, headers=headers)
+        brand_response = client.get("/api/brand-voice", headers=headers)
+        governance_response = client.get("/api/governance", headers=headers)
+        integrations_response = client.get("/api/integrations", headers=headers)
+
+        assert tenant_response.status_code == 200
+        assert tenant_response.json()["tenantId"] == "stay"
+        assert tenant_response.json()["supportEmail"] == "support@stayparfums.com"
+
+        assert overview_response.status_code == 200
+        assert overview_response.json()["metrics"]["aiResolved"] == 1
+        assert overview_response.json()["metrics"]["deflectionRate"] == 1.0
+
+        assert sessions_response.status_code == 200
+        assert sessions_response.json()["sessions"][0]["tenantId"] == "stay"
+        assert sessions_response.json()["sessions"][0]["latestMessage"] == "Do you have free shipping?"
+
+        assert kb_response.status_code == 200
+        assert kb_response.json()["entries"][0]["_id"] == "faq-shipping"
+
+        assert brand_response.status_code == 200
+        assert brand_response.json()["brandVoice"]["tone"] == "Warm, polished, premium"
+
+        assert governance_response.status_code == 200
+        assert governance_response.json()["logs"][0]["decision"] == "answered"
+
+        assert integrations_response.status_code == 200
+        whatsapp = integrations_response.json()["integrations"][0]
+        assert whatsapp["provider"] == "whatsapp"
+        assert whatsapp["accessToken"] == "[redacted]"
+
+
+def test_dashboard_operational_reads_require_active_subscription() -> None:
+    """Operational dashboard endpoints should be blocked for inactive tenants."""
+
+    database = TestDatabase(
+        tenant_repo=StubTenantRepository(
+            {
+                "tenantId": "stay",
+                "tenantName": "Stay Parfums",
+                "role": "owner",
+                "subscriptionStatus": "past_due",
+            }
+        )
+    )
+    app = create_app(
+        settings=Settings(
+            _env_file=None,
+            APP_NAME="SVMP-Dashboard-Inactive-Test",
+            MONGODB_URI="mongodb://unit-test",
+            OPENAI_API_KEY="test-key",
+            WHATSAPP_PROVIDER="meta",
+            WHATSAPP_TOKEN="test-whatsapp-token",
+            WHATSAPP_PHONE_NUMBER_ID="1234567890",
+            WHATSAPP_VERIFY_TOKEN="verify-me",
+            META_APP_SECRET="app-secret",
+            DASHBOARD_AUTH_MODE="trusted_headers",
+            WORKFLOW_B_INTERVAL_SECONDS=1,
+            WORKFLOW_C_INTERVAL_HOURS=24,
+        ),
+        database=database,
+        scheduler=SchedulerStub(),
+    )
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/overview",
+            headers={
+                "X-SVMP-User-Id": "user_123",
+                "X-SVMP-Organization-Id": "org_123",
+            },
+        )
+
+        assert response.status_code == 402
+        assert response.json()["detail"] == "active subscription required"

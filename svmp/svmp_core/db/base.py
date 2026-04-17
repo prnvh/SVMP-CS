@@ -44,6 +44,16 @@ class SessionStateRepository(ABC):
     async def delete_stale_sessions(self, before: datetime) -> int:
         """Delete stale sessions and return the number removed."""
 
+    async def list_by_tenant(
+        self,
+        tenant_id: str,
+        *,
+        limit: int = 50,
+    ) -> list[SessionState]:
+        """List recent active sessions for a tenant when supported."""
+
+        return []
+
 
 class KnowledgeBaseRepository(ABC):
     """Persistence contract for tenant-scoped FAQ entries."""
@@ -56,6 +66,18 @@ class KnowledgeBaseRepository(ABC):
     ) -> list[KnowledgeEntry]:
         """List active FAQ entries for a tenant/domain pair."""
 
+    async def list_by_tenant(
+        self,
+        tenant_id: str,
+        *,
+        active: bool | None = None,
+        search: str | None = None,
+        limit: int = 100,
+    ) -> list[KnowledgeEntry]:
+        """List tenant FAQ entries for dashboard reads when supported."""
+
+        return []
+
 
 class GovernanceLogRepository(ABC):
     """Persistence contract for immutable governance logs."""
@@ -63,6 +85,21 @@ class GovernanceLogRepository(ABC):
     @abstractmethod
     async def create(self, log: GovernanceLog) -> GovernanceLog:
         """Insert and return a governance log record."""
+
+    async def list_by_tenant(
+        self,
+        tenant_id: str,
+        *,
+        limit: int = 100,
+    ) -> list[GovernanceLog]:
+        """List recent governance logs for a tenant when supported."""
+
+        return []
+
+    async def count_by_decision(self, tenant_id: str) -> Mapping[str, int]:
+        """Return tenant governance counts grouped by decision when supported."""
+
+        return {}
 
 
 class TenantRepository(ABC):
@@ -91,6 +128,14 @@ class TenantRepository(ABC):
         """Resolve tenant membership, role, and billing state for dashboard APIs."""
 
         return None
+
+    async def list_integration_status(
+        self,
+        tenant_id: str,
+    ) -> list[Mapping[str, Any]]:
+        """List tenant integration status records when supported."""
+
+        return []
 
 
 class Database(ABC):
