@@ -1,21 +1,24 @@
-"""Dashboard auth, tenant, role, and subscription context helpers.
-
-This module is intentionally a skeleton. It defines the backend boundary the
-customer portal will use, while real Clerk JWT verification and Stripe billing
-updates are added in later slices.
-"""
+"""Dashboard auth, tenant, role, and subscription context helpers."""
 
 from __future__ import annotations
 
+import json
+import time
 from collections.abc import Iterable, Mapping
 from enum import StrEnum
 from typing import Any
 
+import httpx
+import jwt
 from fastapi import Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from svmp_core.config import Settings, get_settings
 from svmp_core.exceptions import ValidationError
+
+_JWKS_CACHE_TTL_SECONDS = 300
+_jwks_cache: dict[str, tuple[float, Mapping[str, Any]]] = {}
+_ALLOWED_CLERK_JWT_ALGORITHMS = frozenset({"RS256"})
 
 
 class PortalRole(StrEnum):
@@ -151,6 +154,165 @@ def authenticated_user_from_trusted_headers(
     )
 
 
+def _bearer_token(authorization: str | None) -> str | None:
+    """Extract a bearer token from an Authorization header."""
+
+    normalized = _non_blank(authorization)
+    if normalized is None:
+        return None
+    scheme, _, token = normalized.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        return None
+    return token.strip()
+
+
+async def _fetch_jwks(jwks_url: str) -> Mapping[str, Any]:
+    """Fetch and cache a JWKS document."""
+
+    cached = _jwks_cache.get(jwks_url)
+    now = time.time()
+    if cached is not None:
+        expires_at, jwks = cached
+        if expires_at > now:
+            return jwks
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(jwks_url)
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="failed to fetch Clerk JWKS",
+        ) from exc
+    if response.is_error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="failed to fetch Clerk JWKS",
+        )
+    try:
+        jwks = response.json()
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Clerk JWKS is invalid",
+        ) from exc
+    if not isinstance(jwks, Mapping) or not isinstance(jwks.get("keys"), list):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Clerk JWKS is invalid",
+        )
+
+    _jwks_cache[jwks_url] = (now + _JWKS_CACHE_TTL_SECONDS, jwks)
+    return jwks
+
+
+async def authenticated_user_from_clerk_jwt(
+    token: str,
+    *,
+    settings: Settings,
+) -> AuthenticatedUser:
+    """Verify a Clerk JWT and return the dashboard user identity."""
+
+    if settings.CLERK_ISSUER is None or not settings.CLERK_ISSUER.strip():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Clerk issuer is not configured",
+        )
+    if settings.CLERK_JWKS_URL is None or not settings.CLERK_JWKS_URL.strip():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Clerk JWKS URL is not configured",
+        )
+
+    try:
+        header = jwt.get_unverified_header(token)
+    except jwt.InvalidTokenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="invalid Clerk token",
+        ) from exc
+
+    kid = header.get("kid")
+    algorithm = header.get("alg")
+    if not isinstance(kid, str) or not isinstance(algorithm, str):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="invalid Clerk token header",
+        )
+    if algorithm not in _ALLOWED_CLERK_JWT_ALGORITHMS:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="unsupported Clerk token algorithm",
+        )
+
+    jwks = await _fetch_jwks(settings.CLERK_JWKS_URL.strip())
+    key_data = next(
+        (
+            key
+            for key in jwks["keys"]
+            if isinstance(key, Mapping) and key.get("kid") == kid
+        ),
+        None,
+    )
+    if key_data is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Clerk token key is unknown",
+        )
+
+    try:
+        public_key = jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(dict(key_data)))
+    except jwt.InvalidKeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="invalid Clerk token key",
+        ) from exc
+    try:
+        claims = jwt.decode(
+            token,
+            public_key,
+            algorithms=list(_ALLOWED_CLERK_JWT_ALGORITHMS),
+            audience=settings.CLERK_AUDIENCE if settings.CLERK_AUDIENCE else None,
+            issuer=settings.CLERK_ISSUER.strip(),
+            options={
+                "require": ["exp", "iat", "iss", "sub"],
+                "verify_aud": bool(settings.CLERK_AUDIENCE),
+            },
+        )
+    except jwt.InvalidTokenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="invalid Clerk token",
+        ) from exc
+
+    if not isinstance(claims, Mapping):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="invalid Clerk token claims",
+        )
+
+    user_id = _non_blank(claims.get("sub"))
+    organization_id = _non_blank(claims.get("org_id"))
+    if user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Clerk token missing user id",
+        )
+    if organization_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Clerk token missing organization context",
+        )
+
+    return AuthenticatedUser(
+        user_id=user_id,
+        organization_id=organization_id,
+        email=_non_blank(claims.get("email"))
+        or _non_blank(claims.get("primary_email_address")),
+        claims=dict(claims),
+    )
+
+
 def tenant_context_from_record(
     user: AuthenticatedUser,
     record: Mapping[str, Any],
@@ -216,14 +378,15 @@ async def require_user(
             ) from exc
 
     if mode == "clerk":
-        if _non_blank(authorization) is None:
+        token = _bearer_token(authorization)
+        if token is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="missing authorization header",
             )
-        raise HTTPException(
-            status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail="Clerk dashboard auth verification is not wired yet",
+        return await authenticated_user_from_clerk_jwt(
+            token,
+            settings=runtime_settings,
         )
 
     raise HTTPException(
@@ -292,7 +455,10 @@ def require_role(
 ):
     """Return a dependency that requires one of the provided dashboard roles."""
 
-    allowed = frozenset(_coerce_role(role.value if isinstance(role, PortalRole) else role) for role in allowed_roles)
+    allowed = frozenset(
+        _coerce_role(role.value if isinstance(role, PortalRole) else role)
+        for role in allowed_roles
+    )
 
     async def active_dependency(
         context: TenantContext = Depends(require_active_subscription),

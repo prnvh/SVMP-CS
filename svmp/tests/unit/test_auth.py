@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import json
+from datetime import datetime, timedelta, timezone
+
+import jwt
 import pytest
 from fastapi import HTTPException
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 from svmp_core.auth import (
     AuthenticatedUser,
@@ -11,10 +16,12 @@ from svmp_core.auth import (
     SubscriptionStatus,
     TenantContext,
     authenticated_user_from_trusted_headers,
+    authenticated_user_from_clerk_jwt,
     require_active_subscription,
     require_role,
     tenant_context_from_record,
 )
+from svmp_core.config import Settings
 from svmp_core.exceptions import ValidationError
 
 
@@ -41,6 +48,126 @@ def test_authenticated_user_from_trusted_headers_normalizes_values() -> None:
     assert user.user_id == "user_123"
     assert user.organization_id == "org_123"
     assert user.email == "owner@example.com"
+
+
+@pytest.mark.asyncio
+async def test_authenticated_user_from_clerk_jwt_verifies_signature_and_claims(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Clerk JWT mode should verify JWKS signature, issuer, audience, and org claim."""
+
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    public_jwk = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(private_key.public_key()))
+    public_jwk["kid"] = "test-key"
+    public_jwk["alg"] = "RS256"
+
+    async def fake_fetch_jwks(jwks_url: str):
+        return {"keys": [public_jwk]}
+
+    monkeypatch.setattr("svmp_core.auth._fetch_jwks", fake_fetch_jwks)
+    now = datetime.now(timezone.utc)
+    token = jwt.encode(
+        {
+            "sub": "user_123",
+            "org_id": "org_123",
+            "email": "owner@stayparfums.com",
+            "iss": "https://clerk.example",
+            "aud": "svmp-dashboard",
+            "iat": int(now.timestamp()),
+            "exp": int((now + timedelta(minutes=5)).timestamp()),
+        },
+        private_key,
+        algorithm="RS256",
+        headers={"kid": "test-key"},
+    )
+
+    user = await authenticated_user_from_clerk_jwt(
+        token,
+        settings=Settings(
+            _env_file=None,
+            CLERK_ISSUER="https://clerk.example",
+            CLERK_JWKS_URL="https://clerk.example/.well-known/jwks.json",
+            CLERK_AUDIENCE="svmp-dashboard",
+        ),
+    )
+
+    assert user.user_id == "user_123"
+    assert user.organization_id == "org_123"
+    assert user.email == "owner@stayparfums.com"
+
+
+@pytest.mark.asyncio
+async def test_authenticated_user_from_clerk_jwt_requires_org_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Clerk JWTs without active org context should not enter tenant APIs."""
+
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    public_jwk = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(private_key.public_key()))
+    public_jwk["kid"] = "test-key"
+    public_jwk["alg"] = "RS256"
+
+    async def fake_fetch_jwks(jwks_url: str):
+        return {"keys": [public_jwk]}
+
+    monkeypatch.setattr("svmp_core.auth._fetch_jwks", fake_fetch_jwks)
+    now = datetime.now(timezone.utc)
+    token = jwt.encode(
+        {
+            "sub": "user_123",
+            "iss": "https://clerk.example",
+            "iat": int(now.timestamp()),
+            "exp": int((now + timedelta(minutes=5)).timestamp()),
+        },
+        private_key,
+        algorithm="RS256",
+        headers={"kid": "test-key"},
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await authenticated_user_from_clerk_jwt(
+            token,
+            settings=Settings(
+                _env_file=None,
+                CLERK_ISSUER="https://clerk.example",
+                CLERK_JWKS_URL="https://clerk.example/.well-known/jwks.json",
+            ),
+        )
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == "Clerk token missing organization context"
+
+
+@pytest.mark.asyncio
+async def test_authenticated_user_from_clerk_jwt_rejects_unsupported_algorithm() -> None:
+    """Clerk JWT mode should only accept the expected RSA signing algorithm."""
+
+    now = datetime.now(timezone.utc)
+    token = jwt.encode(
+        {
+            "sub": "user_123",
+            "org_id": "org_123",
+            "iss": "https://clerk.example",
+            "iat": int(now.timestamp()),
+            "exp": int((now + timedelta(minutes=5)).timestamp()),
+        },
+        "shared-secret",
+        algorithm="HS256",
+        headers={"kid": "test-key"},
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await authenticated_user_from_clerk_jwt(
+            token,
+            settings=Settings(
+                _env_file=None,
+                CLERK_ISSUER="https://clerk.example",
+                CLERK_JWKS_URL="https://clerk.example/.well-known/jwks.json",
+            ),
+        )
+
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail == "unsupported Clerk token algorithm"
 
 
 def test_tenant_context_from_record_uses_backend_owned_membership_record() -> None:
@@ -167,3 +294,19 @@ async def test_require_role_blocks_unlisted_role() -> None:
 
     assert exc_info.value.status_code == 403
     assert exc_info.value.detail == "insufficient dashboard role"
+
+
+@pytest.mark.asyncio
+async def test_require_role_can_skip_subscription_gate_for_billing_recovery() -> None:
+    """Billing routes need owner role checks even when payment is inactive."""
+
+    context = TenantContext(
+        user_id="user_123",
+        organization_id="org_123",
+        tenant_id="stay",
+        role=PortalRole.OWNER,
+        subscription_status=SubscriptionStatus.PAST_DUE,
+    )
+    dependency = require_role([PortalRole.OWNER], require_subscription=False)
+
+    assert await dependency(context) == context
