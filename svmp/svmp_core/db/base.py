@@ -41,6 +41,14 @@ class SessionStateRepository(ABC):
         """Atomically acquire one ready session for Workflow B processing."""
 
     @abstractmethod
+    async def acquire_ready_session_by_id(
+        self,
+        session_id: str,
+        now: datetime,
+    ) -> SessionState | None:
+        """Atomically acquire a specific ready session for Workflow B processing."""
+
+    @abstractmethod
     async def delete_stale_sessions(self, before: datetime) -> int:
         """Delete stale sessions and return the number removed."""
 
@@ -89,6 +97,16 @@ class KnowledgeBaseRepository(ABC):
 
     async def create(self, entry: KnowledgeEntry) -> KnowledgeEntry:
         """Create and return a tenant-scoped FAQ entry when supported."""
+
+        raise NotImplementedError
+
+    async def replace_entries_for_tenant_domain(
+        self,
+        tenant_id: str,
+        domain_id: str,
+        entries: Sequence[KnowledgeEntry],
+    ) -> int:
+        """Replace a tenant/domain slice with the provided entries when supported."""
 
         raise NotImplementedError
 
@@ -151,6 +169,11 @@ class TenantRepository(ABC):
         """Update tenant metadata when supported."""
 
         return None
+
+    async def upsert_tenant(self, tenant_document: Mapping[str, Any]) -> Mapping[str, Any]:
+        """Create or replace a tenant configuration document when supported."""
+
+        raise NotImplementedError
 
     async def resolve_tenant_id_for_provider(
         self,

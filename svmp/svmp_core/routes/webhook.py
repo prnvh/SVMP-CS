@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from datetime import datetime
 from json import JSONDecodeError
 from typing import Any
 from urllib.parse import parse_qsl
@@ -15,7 +16,7 @@ from svmp_core.db.base import Database
 from svmp_core.exceptions import DatabaseError, SecurityError, ValidationError
 from svmp_core.integrations import get_whatsapp_provider
 from svmp_core.integrations.webhook_security import verify_inbound_webhook
-from svmp_core.workflows import run_workflow_a
+from svmp_core.workflows import run_workflow_a, run_workflow_b
 
 
 def build_webhook_router(
@@ -79,6 +80,27 @@ def build_webhook_router(
                             identities.append(candidate)
 
         return identities
+
+    def _schedule_workflow_b_session(request: Request, session_id: str, run_at: datetime) -> None:
+        """Schedule Workflow B exactly for the session's debounce expiry."""
+
+        scheduler = getattr(request.app.state, "scheduler", None)
+        if scheduler is None:
+            return
+
+        job_id = f"workflow_b_session_{session_id}"
+        scheduler.add_job(
+            run_workflow_b,
+            trigger="date",
+            run_date=run_at,
+            id=job_id,
+            replace_existing=True,
+            kwargs={
+                "database": database,
+                "settings": runtime_settings,
+                "session_id": session_id,
+            },
+        )
 
     @router.get("/webhook")
     async def verify_webhook(
@@ -188,6 +210,8 @@ def build_webhook_router(
                 )
                 if session.id is not None and not session_id:
                     session_id = session.id
+                if session.id is not None:
+                    _schedule_workflow_b_session(request, session.id, session.debounce_expires_at)
         except ValidationError as exc:
             raise _http_400(str(exc)) from exc
         except DatabaseError as exc:

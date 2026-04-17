@@ -19,6 +19,13 @@ class FakeInsertResult:
         self.inserted_id = inserted_id
 
 
+class FakeInsertManyResult:
+    """Minimal insert-many result shape used by the fake collection."""
+
+    def __init__(self, inserted_ids: list[str]) -> None:
+        self.inserted_ids = inserted_ids
+
+
 class FakeDeleteResult:
     """Minimal delete result shape used by the fake collection."""
 
@@ -54,6 +61,13 @@ class FakeCollection:
         stored.setdefault("_id", f"id-{self._counter}")
         self.documents.append(stored)
         return FakeInsertResult(stored["_id"])
+
+    async def insert_many(self, documents: list[dict]) -> FakeInsertManyResult:
+        inserted_ids: list[str] = []
+        for document in documents:
+            result = await self.insert_one(document)
+            inserted_ids.append(result.inserted_id)
+        return FakeInsertManyResult(inserted_ids)
 
     async def find_one(self, query: dict) -> dict | None:
         for document in self.documents:
@@ -135,6 +149,8 @@ def _matches(document: dict, query: dict) -> bool:
                 if operator == "$ne" and not (actual != operand):
                     return False
                 if operator == "$exists" and ((actual is not None) is not bool(operand)):
+                    return False
+                if operator == "$in" and actual not in operand:
                     return False
         elif isinstance(actual, list):
             if expected not in actual:
@@ -269,6 +285,20 @@ async def test_session_repository_round_trip_and_ready_acquisition() -> None:
     assert reopened is not None
     assert reopened.status == "open"
 
+    acquired_specific = await database.session_state.acquire_ready_session_by_id(created.id, now)
+    assert acquired_specific is not None
+    assert acquired_specific.id == created.id
+    assert acquired_specific.processing is True
+
+    reset = await database.session_state.update_by_id(
+        created.id,
+        {
+            "processing": False,
+            "debounce_expires_at": now - timedelta(seconds=2),
+        },
+    )
+    assert reset is not None
+
     acquired = await database.session_state.acquire_ready_session(now)
     assert acquired is not None
     assert acquired.id == created.id
@@ -337,6 +367,14 @@ async def test_knowledge_governance_and_tenant_repositories() -> None:
                 "active": True,
             },
             {
+                "_id": "shared-1",
+                "tenantId": "__shared__",
+                "domainId": "general",
+                "question": "Hi",
+                "answer": "Hi! How can I help?",
+                "active": True,
+            },
+            {
                 "_id": "faq-2",
                 "tenantId": "Niyomilan",
                 "domainId": "general",
@@ -351,13 +389,15 @@ async def test_knowledge_governance_and_tenant_repositories() -> None:
             "_id": "tenant-1",
             "tenantId": "Niyomilan",
             "settings": {"confidenceThreshold": 0.75},
+            "brandVoice": "Warm, polished, and premium.",
             "tags": ["ecom"],
         }
     )
 
     entries = await database.knowledge_base.list_active_by_tenant_and_domain("Niyomilan", "general")
-    assert len(entries) == 1
+    assert len(entries) == 2
     assert entries[0].id == "faq-1"
+    assert entries[1].id == "shared-1"
 
     log = await database.governance_logs.create(
         GovernanceLog(
@@ -376,6 +416,7 @@ async def test_knowledge_governance_and_tenant_repositories() -> None:
     assert tenant is not None
     assert tenant["tenantId"] == "Niyomilan"
     assert tenant["settings"]["confidenceThreshold"] == 0.75
+    assert tenant["brandVoice"] == "Warm, polished, and premium."
 
 
 @pytest.mark.asyncio

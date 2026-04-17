@@ -57,6 +57,8 @@ Provider connection details live in [`docs/provider_connection.md`](docs/provide
 Public landing page planning lives in [`docs/landing_page.md`](docs/landing_page.md).
 Customer portal planning starts in [`docs/customer_portal.md`](docs/customer_portal.md), with API contracts in [`docs/dashboard_api.md`](docs/dashboard_api.md) and auth/billing rules in [`docs/auth_billing_model.md`](docs/auth_billing_model.md).
 
+Production deploys should track the latest GitHub head together with the active Vercel environment configuration.
+
 ## Quick Validation
 
 From the repo root, these commands give the fastest proof that the current app is wired correctly:
