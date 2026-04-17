@@ -1,42 +1,41 @@
 # SVMP
 
-SVMP is a governance and orchestration layer for AI-powered customer service systems. The project is being rebuilt from an n8n prototype into a code-first service that is easier to test, observe, and ship.
+SVMP is a governance and orchestration layer for AI-powered customer service systems. It is a code-first FastAPI service that receives WhatsApp conversations, merges fragmented customer messages into coherent requests, routes them safely, and keeps a governance trail of what happened.
 
-Customer conversations often arrive as fragmented message streams rather than complete requests. SVMP is designed to merge those fragments into a coherent request, route the request safely, and keep a governance trail of what happened.
+## Direction
 
-## Current Direction
-
-The repo is being rebuilt in a Mongo-first shape so the core product can become demoable quickly using the existing MongoDB cluster and document schemas from the n8n prototype.
+This repository is the main SVMP application. Product, runtime, tenant, security, and deployment concerns belong in this repo as one system.
 
 The near-term goal is to:
 
-- get `svmp-core` running first
-- keep the core testable from the start
+- keep the SVMP runtime testable from the start
 - use repository interfaces so business logic is not tightly coupled to MongoDB
+- ship a production-oriented WhatsApp automation service from this codebase
 - leave room for a later PostgreSQL adapter if it becomes worthwhile
 
-## Planned Architecture
+## Repository Structure
 
-`svmp-core/`
+`svmp/`
 
-- reusable application core
 - FastAPI app and webhook intake
 - workflows for ingest, processing, and cleanup
 - models, config, logging, exceptions, and DB interfaces
 - MongoDB implementation first
-
-`svmp-platform/`
-
-- reserved for the later SaaS/platform wrapper
-- tenant-aware auth, admin, security, and deployment concerns
-- should stay thin and reuse `svmp-core` rather than fork the logic
+- OpenAI and WhatsApp provider integrations
+- tests for the application runtime
 
 `scripts/`
 
 - one-off setup and demo scripts
-- knowledge base seeding and local/dev utilities
+- knowledge-base seeding and local/dev utilities
 
-## Core Runtime Flow
+`docs/`
+
+- architecture notes, provider setup, and schema notes
+- public landing page plan
+- customer portal product, API, auth, and billing contracts
+
+## Runtime Flow
 
 1. A webhook receives a customer message.
 2. Workflow A writes or updates session state and starts the debounce window.
@@ -45,22 +44,25 @@ The near-term goal is to:
 
 ## Status
 
-`svmp-core` is now runnable in its Mongo-first demo shape:
+SVMP is now runnable in its Mongo-first app shape:
 
 - the FastAPI app boots and wires Workflow B / Workflow C scheduler jobs
 - webhook verification and inbound intake routes are available
+- provider POST webhooks are signature-checked before SVMP ingests messages
 - Workflow A, Workflow B, and Workflow C all have integration coverage
 - a demo smoke test proves ingest -> process -> governance in one end-to-end path
 - a repeatable knowledge-base seed script is available under `scripts/`
 
-Detailed setup and demo instructions live in [`docs/demo_run_notes.md`](docs/demo_run_notes.md).
+Provider connection details live in [`docs/provider_connection.md`](docs/provider_connection.md).
+Public landing page planning lives in [`docs/landing_page.md`](docs/landing_page.md).
+Customer portal planning starts in [`docs/customer_portal.md`](docs/customer_portal.md), with API contracts in [`docs/dashboard_api.md`](docs/dashboard_api.md) and auth/billing rules in [`docs/auth_billing_model.md`](docs/auth_billing_model.md).
 
 ## Quick Validation
 
-From the repo root, these commands give the fastest proof that the current demoable core is wired correctly:
+From the repo root, these commands give the fastest proof that the current app is wired correctly:
 
 ```bash
-python -m pytest svmp-core/tests/integration/test_main.py
-python -m pytest svmp-core/tests/integration/test_demo_smoke.py
-python -m pytest svmp-core/tests/integration/test_seed_script.py
+python -m pytest svmp/tests/integration/test_main.py
+python -m pytest svmp/tests/integration/test_demo_smoke.py
+python -m pytest svmp/tests/integration/test_seed_script.py
 ```

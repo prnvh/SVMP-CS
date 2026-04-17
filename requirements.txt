@@ -1,4 +1,4 @@
-# svmp-core runtime
+# SVMP runtime
 fastapi==0.115.0
 uvicorn[standard]==0.30.0
 pydantic==2.8.0

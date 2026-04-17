@@ -298,4 +298,4 @@ These are treated as historical/test artifacts rather than canonical rebuild fie
 - the exact production indexes currently active in Atlas
 - the exact final payload shape used for governance log metadata in the live cluster
 
-These items are not blockers for the code-first rebuild of `svmp-core`.
+These items are not blockers for the code-first SVMP rebuild.

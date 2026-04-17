@@ -17,7 +17,7 @@ This document describes the code as it exists in the repository right now.
 
 ## Repository Structure
 
-### `svmp-core/`
+### `svmp/`
 
 Primary application code.
 
@@ -47,10 +47,6 @@ Operational and demo scripts.
 - `verify_live_runtime.py`
 - `demo_data/sample_tenant.json`
 - `demo_data/sample_kb.json`
-
-### `svmp-platform/`
-
-Reserved for future platform work. It is not the active runtime path.
 
 ## Architecture Summary
 

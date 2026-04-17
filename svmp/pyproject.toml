@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "svmp-cs"
+version = "0.1.0"
+description = "Mongo-first SVMP application for AI customer service workflows"
+authors = [{name = "Pranav Harikumar", email = "prnvvh@gmail.com"}]
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi==0.115.0",
+    "uvicorn[standard]==0.30.0",
+    "pydantic==2.8.0",
+    "pydantic-settings==2.4.0",
+    "openai==1.40.0",
+    "httpx==0.27.0",
+    "structlog==24.4.0",
+    "python-dotenv==1.0.1",
+    "apscheduler==3.10.4",
+    "motor==3.4.0",
+    "pymongo==4.8.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.3.5",
+    "pytest-asyncio==0.24.0",
+    "pytest-cov==4.1.0",
+    "pytest-mock==3.14.0",
+]
