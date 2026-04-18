@@ -12,7 +12,7 @@ export default function BrandVoicePage() {
     <>
       <PageHeader
         eyebrow="Brand voice"
-        title="Control how SVMP sounds before it answers customers."
+        title="Control how SVMP CS sounds before it answers customers."
         copy="Set tone, required language, blocked language, and the escalation style used when confidence is low."
         action={
           <button className="rounded-[8px] bg-ink px-4 py-3 text-sm font-semibold text-paper hover:bg-pine">
@@ -83,7 +83,7 @@ export default function BrandVoicePage() {
               className="mt-3 w-full rounded-[8px] border border-line bg-paper p-3 text-sm outline-none focus:border-pine"
             />
             <div className="mt-5 rounded-[8px] border border-line bg-paper p-4">
-              <p className="text-sm font-semibold">SVMP preview</p>
+              <p className="text-sm font-semibold">SVMP CS preview</p>
               <p className="mt-2 text-sm leading-6 text-ink/68">
                 I can help with returns. Because opened-product eligibility can depend on the exact order and policy details, I will connect you with the support team to confirm the next step.
               </p>

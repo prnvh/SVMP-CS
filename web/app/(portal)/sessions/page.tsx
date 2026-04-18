@@ -12,7 +12,7 @@ export default async function SessionsPage() {
       <PageHeader
         eyebrow="Sessions"
         title="Every customer conversation, searchable and reviewable."
-        copy="See what the customer asked, what SVMP answered, what source it used, and why anything escalated."
+        copy="See what the customer asked, what SVMP CS answered, what source it used, and why anything escalated."
         action={
           <div className="flex gap-2">
             <input

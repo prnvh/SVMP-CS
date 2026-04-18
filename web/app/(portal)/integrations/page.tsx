@@ -12,7 +12,7 @@ export default async function IntegrationsPage() {
     <>
       <PageHeader
         eyebrow="Integrations"
-        title="Connect the channels SVMP is allowed to operate."
+        title="Connect the channels SVMP CS is allowed to operate."
         copy="WhatsApp is the live MVP channel. Future integrations stay clearly marked until they are actually connected."
         action={
           <button className="rounded-[8px] bg-ink px-4 py-3 text-sm font-semibold text-paper hover:bg-pine">

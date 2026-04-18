@@ -12,7 +12,7 @@ export default async function KnowledgeBasePage() {
     <>
       <PageHeader
         eyebrow="Knowledge base"
-        title="The approved source SVMP is allowed to answer from."
+        title="The approved source SVMP CS is allowed to answer from."
         copy="Add, update, deactivate, import, and test FAQ entries before they influence customer replies."
         action={
           <div className="flex flex-wrap gap-2">
@@ -90,7 +90,7 @@ export default async function KnowledgeBasePage() {
             <div className="mt-5 rounded-[8px] border border-line bg-paper p-4">
               <p className="text-sm font-semibold">Preview result</p>
               <p className="mt-2 text-sm leading-6 text-ink/66">
-                Matched "Do you offer free shipping?" with confidence 0.92. SVMP would answer from the shipping FAQ.
+                Matched "Do you offer free shipping?" with confidence 0.92. SVMP CS would answer from the shipping FAQ.
               </p>
             </div>
           </Panel>

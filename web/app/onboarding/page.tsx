@@ -23,7 +23,7 @@ const steps = [
     done: false,
   },
   {
-    title: "Test SVMP",
+    title: "Test SVMP CS",
     copy: "Ask sample customer questions before going live.",
     done: false,
   },
@@ -40,7 +40,7 @@ export default function OnboardingPage() {
       <header className="border-b border-line bg-white px-5 py-4 md:px-8">
         <div className="mx-auto flex max-w-6xl items-center justify-between">
           <Link href="/" className="font-semibold">
-            SVMP
+            SVMP CS
           </Link>
           <Link
             href="/dashboard"

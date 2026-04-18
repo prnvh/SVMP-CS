@@ -48,7 +48,7 @@ export default async function SessionDetailPage({
         </Panel>
 
         <div className="space-y-6">
-          <Panel title="Decision" eyebrow="SVMP outcome">
+          <Panel title="Decision" eyebrow="SVMP CS outcome">
             <div className="space-y-4">
               <div className="rounded-[8px] border border-line p-4">
                 <p className="text-sm font-semibold text-ink/60">Answer</p>

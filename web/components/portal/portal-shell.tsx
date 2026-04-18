@@ -47,7 +47,7 @@ export function PortalShell({
         <div className="flex h-full flex-col">
           <div className="border-b border-line p-6">
             <Link href="/" className="text-lg font-semibold">
-              SVMP
+              SVMP CS
             </Link>
             <p className="mt-2 text-sm leading-6 text-ink/58">Customer portal</p>
           </div>

@@ -13,7 +13,7 @@ export default function LoginPage() {
       <div className="grid min-h-screen lg:grid-cols-[0.95fr_1.05fr]">
         <section className="flex flex-col justify-between border-b border-line p-6 md:p-10 lg:border-b-0 lg:border-r">
           <Link href="/" className="text-lg font-semibold">
-            SVMP
+            SVMP CS
           </Link>
           <div className="my-16 max-w-xl">
             <p className="text-sm font-semibold text-pine">Customer portal</p>
@@ -21,7 +21,7 @@ export default function LoginPage() {
               Sign in to manage your AI support system.
             </h1>
             <p className="mt-7 text-lg leading-8 text-ink/68">
-              Paid client access is tied to your organization. SVMP resolves the tenant on the backend and gates operational pages by subscription state.
+              Paid client access is tied to your organization. SVMP CS resolves the tenant on the backend and gates operational pages by subscription state.
             </p>
           </div>
           <div className="grid gap-px overflow-hidden rounded-[8px] border border-line bg-line">

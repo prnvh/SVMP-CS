@@ -15,7 +15,7 @@ export default async function DashboardPage() {
     <>
       <PageHeader
         eyebrow="Overview"
-        title="Is SVMP helping support today?"
+        title="Is SVMP CS helping support today?"
         copy="Monitor live value, health, and anything that needs setup attention before customers feel it."
         action={
           <Link
