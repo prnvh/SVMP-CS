@@ -58,9 +58,9 @@ const safety = [
 ];
 
 const buildStatus = [
-  ["Backend", "FastAPI runtime with WhatsApp webhook intake"],
-  ["Database", "MongoDB tenants, sessions, knowledge base, governance logs"],
-  ["Portal", "Customer dashboard for paid tenant configuration and monitoring"],
+  ["Backend", "FastAPI runtime handling authenticated dashboard APIs and WhatsApp intake."],
+  ["Data layer", "Tenant, session, knowledge, and governance records stay isolated per organization."],
+  ["Portal", "Paid client workspace for setup, operations, billing, and oversight."],
 ];
 
 function Arrow() {
@@ -267,7 +267,7 @@ export default function Home() {
       <section className="section-pad border-b border-line">
         <div className="mx-auto grid max-w-7xl gap-10 py-14 lg:grid-cols-[0.34fr_1fr]">
           <div>
-            <p className="text-[15px] font-semibold">Build status</p>
+            <p className="text-[15px] font-semibold">Platform</p>
           </div>
           <div className="grid gap-px overflow-hidden rounded-[8px] border border-line bg-line md:grid-cols-3">
             {buildStatus.map(([title, copy]) => (
@@ -283,14 +283,14 @@ export default function Home() {
       <section id="access" className="section-pad">
         <div className="mx-auto grid max-w-7xl gap-12 py-20 lg:grid-cols-[1fr_0.8fr] lg:py-28">
           <div>
-            <p className="text-[15px] font-semibold text-pine">Private rollout</p>
+            <p className="text-[15px] font-semibold text-pine">Access model</p>
             <h2 className="mt-5 max-w-4xl font-serif text-5xl leading-tight md:text-6xl">
-              Built with paid clients before public self-serve.
+              Structured onboarding for paid support teams.
             </h2>
           </div>
           <div>
             <p className="text-xl leading-9 text-ink/72">
-              SVMP CS is being shaped as a guided deployment first: tenant setup, knowledge base, brand voice, WhatsApp connection, governance review, and then go-live.
+              Each workspace is configured around tenant setup, approved knowledge, brand voice, billing, WhatsApp connection, governance review, and a controlled go-live path.
             </p>
             <a
               href="mailto:hello@svmpsystems.com?subject=SVMP%20demo"
