@@ -1,5 +1,6 @@
 import { MagicLinkSignIn } from "@/components/auth/magic-link-sign-in";
 import { getAuthSafe } from "@/lib/clerk-auth";
+import { isClerkConfigured } from "@/lib/clerk-env";
 import { redirect } from "next/navigation";
 
 const checks = [
@@ -24,6 +25,8 @@ export default async function LoginPage({
   if (userId) {
     redirect("/dashboard");
   }
+
+  const clerkConfigured = isClerkConfigured();
 
   return (
     <main className="min-h-screen bg-paper text-ink">
@@ -59,7 +62,13 @@ export default async function LoginPage({
             </p>
 
             <div className="mt-8">
-              <MagicLinkSignIn organizationRequired={organizationRequired} />
+              {clerkConfigured ? (
+                <MagicLinkSignIn organizationRequired={organizationRequired} />
+              ) : (
+                <div className="rounded-[8px] border border-line bg-paper p-4 text-sm leading-6 text-ink/64">
+                  Authentication is not configured in this deployment yet. Set the Clerk publishable and secret keys in the live environment, then refresh this page.
+                </div>
+              )}
             </div>
           </div>
         </section>
