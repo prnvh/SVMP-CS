@@ -17,6 +17,7 @@ import {
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { MeResponse, TenantResponse } from "@/services/api/types";
+import { tenantDisplayName } from "@/lib/tenant-display";
 
 const navItems = [
   { label: "Overview", href: "/dashboard", icon: LayoutDashboard },
@@ -50,6 +51,7 @@ export function PortalShell({
     ? navItems
     : [{ label: "Settings", href: "/settings", icon: Settings }];
   const subscriptionLabel = tenant.billing.status.replace("_", " ");
+  const displayName = tenantDisplayName(me, tenant) ?? "\u2014";
 
   return (
     <div className="min-h-screen bg-paper text-ink">
@@ -88,7 +90,7 @@ export function PortalShell({
             <div className="rounded-[8px] border border-line bg-paper p-4">
               <div className="flex items-center gap-2 text-sm font-semibold">
                 <Gauge size={17} />
-                {tenant.tenantName ?? me.tenantName ?? "SVMP CS tenant"}
+                {displayName}
               </div>
               <p className="mt-3 text-sm leading-6 text-ink/62">
                 {me.hasActiveSubscription
@@ -121,10 +123,10 @@ export function PortalShell({
             </nav>
             <div>
               <p className="text-sm font-semibold text-pine">
-                {tenant.tenantName ?? me.tenantName ?? me.tenantId}
+                {displayName}
               </p>
               <p className="mt-1 text-sm text-ink/58">
-                Tenant: {me.tenantId}. Role: {me.role}. Subscription: {subscriptionLabel}.
+                Tenant: {displayName === "\u2014" ? "\u2014" : me.tenantId}. Role: {me.role}. Subscription: {subscriptionLabel}.
               </p>
             </div>
             <div className="flex items-center gap-3">

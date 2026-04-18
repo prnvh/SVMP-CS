@@ -1,9 +1,9 @@
 import { SignUp } from "@clerk/nextjs";
-import { auth } from "@clerk/nextjs/server";
+import { getAuthSafe } from "@/lib/clerk-auth";
 import { redirect } from "next/navigation";
 
 export default async function SignUpPage() {
-  const { userId } = await auth();
+  const { userId } = await getAuthSafe();
 
   if (userId) {
     redirect("/dashboard");

@@ -1,5 +1,5 @@
-import { auth } from "@clerk/nextjs/server";
 import { MagicLinkSignIn } from "@/components/auth/magic-link-sign-in";
+import { getAuthSafe } from "@/lib/clerk-auth";
 import { redirect } from "next/navigation";
 
 const checks = [
@@ -14,7 +14,7 @@ export default async function LoginPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const { userId } = await auth();
+  const { userId } = await getAuthSafe();
   const params = await searchParams;
   const organizationState = params.organization;
   const organizationRequired =

@@ -100,30 +100,34 @@ export default async function DashboardPage() {
     const recentSessions = sessionsResponse.sessions.slice(0, 3);
     const automationTrend = trendFromLogs(overview.recentActivity);
     const topicDistribution = topicsFromSessions(sessionsResponse.sessions);
+    const hasDecisionData = overview.metrics.aiResolved + overview.metrics.humanEscalated > 0;
+    const hasSessionData = sessionsResponse.sessions.length > 0;
+    const hasTrendData = automationTrend.some((item) => item.answered > 0 || item.escalated > 0);
+    const hasTopicData = topicDistribution.length > 0;
     const metrics = [
       {
         label: "Deflection rate",
-        value: percentage(overview.metrics.deflectionRate),
+        value: hasDecisionData ? percentage(overview.metrics.deflectionRate) : "\u2014",
         detail: "Questions answered without a human handoff.",
-        trend: `${overview.metrics.aiResolved} answered`,
+        trend: overview.metrics.aiResolved > 0 ? `${overview.metrics.aiResolved} answered` : null,
       },
       {
         label: "Human hours saved",
-        value: overview.metrics.humanHoursSaved.toFixed(1),
+        value: hasDecisionData ? overview.metrics.humanHoursSaved.toFixed(1) : "\u2014",
         detail: "Estimated support time saved from automated answers.",
-        trend: `${overview.metrics.humanEscalated} escalated`,
+        trend: overview.metrics.humanEscalated > 0 ? `${overview.metrics.humanEscalated} escalated` : null,
       },
       {
         label: "Active sessions",
-        value: String(overview.metrics.activeSessions),
+        value: hasSessionData || overview.metrics.activeSessions > 0 ? String(overview.metrics.activeSessions) : "\u2014",
         detail: "Open customer conversations across the resolved tenant.",
-        trend: `${overview.metrics.activeKnowledgeEntries} KB entries`,
+        trend: overview.metrics.activeKnowledgeEntries > 0 ? `${overview.metrics.activeKnowledgeEntries} KB entries` : null,
       },
       {
         label: "Safety score",
-        value: overview.metrics.safetyScore === null ? "n/a" : String(overview.metrics.safetyScore),
+        value: overview.metrics.safetyScore === null ? "\u2014" : String(overview.metrics.safetyScore),
         detail: "Governance scoring across the latest answered and escalated decisions.",
-        trend: overview.systemHealth.subscription,
+        trend: null,
       },
     ];
     const whatsapp = integrationsResponse.integrations.find((integration) => integration.provider === "whatsapp");
@@ -152,18 +156,34 @@ export default async function DashboardPage() {
 
         <div className="mt-6 grid gap-6 xl:grid-cols-[1.35fr_0.85fr]">
           <Panel title="AI resolved vs human escalated" eyebrow="Automation trend">
-            <AutomationTrendChart data={automationTrend.length ? automationTrend : [{ day: "Recent", answered: 0, escalated: 0 }]} />
+            {hasTrendData ? (
+              <AutomationTrendChart data={automationTrend} />
+            ) : (
+              <EmptyState
+                title="No automation trend yet"
+                copy="This chart will fill in after live answered and escalated decisions start landing for the current tenant."
+              />
+            )}
           </Panel>
           <Panel title="Topic distribution" eyebrow="Recent session mix">
-            <TopicPieChart data={topicDistribution.length ? topicDistribution : [{ name: "General", value: 100 }]} />
-            <div className="grid gap-2">
-              {topicDistribution.map((topic) => (
-                <div key={topic.name} className="flex items-center justify-between text-sm">
-                  <span className="text-ink/68">{topic.name}</span>
-                  <span className="font-semibold">{topic.value}%</span>
+            {hasTopicData ? (
+              <>
+                <TopicPieChart data={topicDistribution} />
+                <div className="grid gap-2">
+                  {topicDistribution.map((topic) => (
+                    <div key={topic.name} className="flex items-center justify-between text-sm">
+                      <span className="text-ink/68">{topic.name}</span>
+                      <span className="font-semibold">{topic.value}%</span>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
+              </>
+            ) : (
+              <EmptyState
+                title="No topic mix yet"
+                copy="Topic distribution will appear once the current tenant has recorded live customer sessions."
+              />
+            )}
           </Panel>
         </div>
 

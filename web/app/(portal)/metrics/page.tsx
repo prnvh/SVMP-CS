@@ -120,36 +120,41 @@ export default async function MetricsPage() {
       api.getSessions(),
       api.getGovernance(),
     ]);
+    const hasDecisionData = metricsResponse.decisionCounts.total > 0;
+    const hasSessionData = sessionsResponse.sessions.length > 0;
     const metrics = [
       {
         label: "Deflection rate",
-        value: percentage(metricsResponse.deflectionRate),
+        value: hasDecisionData ? percentage(metricsResponse.deflectionRate) : "\u2014",
         detail: "Share of answered sessions versus escalated ones.",
-        trend: `${metricsResponse.decisionCounts.answered} answered`,
+        trend: metricsResponse.decisionCounts.answered > 0 ? `${metricsResponse.decisionCounts.answered} answered` : null,
       },
       {
         label: "Human hours saved",
-        value: metricsResponse.humanHoursSaved.toFixed(1),
+        value: hasDecisionData ? metricsResponse.humanHoursSaved.toFixed(1) : "\u2014",
         detail: "Estimated time saved from approved automated answers.",
-        trend: `${metricsResponse.decisionCounts.escalated} escalated`,
+        trend: metricsResponse.decisionCounts.escalated > 0 ? `${metricsResponse.decisionCounts.escalated} escalated` : null,
       },
       {
         label: "Active sessions",
-        value: String(overview.metrics.activeSessions),
+        value: hasSessionData || overview.metrics.activeSessions > 0 ? String(overview.metrics.activeSessions) : "\u2014",
         detail: "Open customer conversations currently in the tenant queue.",
-        trend: `${sessionsResponse.sessions.length} total tracked`,
+        trend: hasSessionData ? `${sessionsResponse.sessions.length} total tracked` : null,
       },
       {
         label: "Knowledge entries",
-        value: String(overview.metrics.activeKnowledgeEntries),
+        value: overview.metrics.activeKnowledgeEntries > 0 ? String(overview.metrics.activeKnowledgeEntries) : "\u2014",
         detail: "Approved answers available to the automation layer.",
-        trend: overview.systemHealth.subscription,
+        trend: null,
       },
     ];
     const automationTrend = trendFromLogs(governanceResponse.logs);
     const topicDistribution = topicsFromSessions(sessionsResponse.sessions);
     const hourlyResponse = responseByHour(sessionsResponse.sessions);
     const gaps = kbGaps(sessionsResponse.sessions, governanceResponse.logs);
+    const hasTrendData = automationTrend.some((item) => item.answered > 0 || item.escalated > 0);
+    const hasTopicData = topicDistribution.length > 0;
+    const hasHourlyData = hourlyResponse.length > 0;
 
     return (
       <>
@@ -167,12 +172,20 @@ export default async function MetricsPage() {
 
         <div className="mt-6 grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
           <Panel title="Automation trend" eyebrow="AI resolved vs human escalated">
-            <AutomationTrendChart data={automationTrend.length ? automationTrend : [{ day: "Recent", answered: 0, escalated: 0 }]} />
+            {hasTrendData ? (
+              <AutomationTrendChart data={automationTrend} />
+            ) : (
+              <EmptyState
+                title="No automation trend yet"
+                copy="This chart will appear after the current tenant has live answered and escalated decisions."
+              />
+            )}
           </Panel>
 
           <Panel title="Topic distribution" eyebrow="Conversation mix">
-            <TopicPieChart data={topicDistribution.length ? topicDistribution : [{ name: "General", value: 100 }]} />
-            {topicDistribution.length ? (
+            {hasTopicData ? (
+              <>
+                <TopicPieChart data={topicDistribution} />
               <div className="grid gap-2">
                 {topicDistribution.map((topic) => (
                   <div key={topic.name} className="flex items-center justify-between rounded-[8px] bg-mist px-3 py-2 text-sm">
@@ -181,22 +194,26 @@ export default async function MetricsPage() {
                   </div>
                 ))}
               </div>
+              </>
             ) : (
-              <p className="text-sm leading-6 text-ink/62">
-                Topic mix will fill in as more customer sessions are recorded for this tenant.
-              </p>
+              <EmptyState
+                title="No topic mix yet"
+                copy="Topic distribution will fill in after live customer sessions are recorded for the current tenant."
+              />
             )}
           </Panel>
         </div>
 
         <div className="mt-6 grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
           <Panel title="Response proxy by hour" eyebrow="Avg. messages per session">
-            <ResponseTimeChart data={hourlyResponse.length ? hourlyResponse : [{ hour: "Recent", minutes: 0 }]} />
-            {!hourlyResponse.length ? (
-              <p className="mt-4 text-sm leading-6 text-ink/62">
-                Response timing trends will appear after the first set of live conversations arrives.
-              </p>
-            ) : null}
+            {hasHourlyData ? (
+              <ResponseTimeChart data={hourlyResponse} />
+            ) : (
+              <EmptyState
+                title="No response timing yet"
+                copy="Response timing trends will appear after the first set of live conversations arrives for this tenant."
+              />
+            )}
           </Panel>
 
           <Panel title="KB gap insights" eyebrow="Questions without approved coverage">

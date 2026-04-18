@@ -5,6 +5,11 @@ import { useState, useTransition } from "react";
 import { Notice } from "@/components/portal/notice";
 import { Panel } from "@/components/portal/panel";
 import { StatusBadge, statusTone } from "@/components/portal/status-badge";
+import {
+  sanitizeSupportEmail,
+  sanitizeTenantName,
+  sanitizeWebsiteUrl,
+} from "@/lib/tenant-display";
 import { useBrowserApi } from "@/services/api/browser";
 import { ApiError } from "@/services/api/shared";
 import type { MeResponse, TenantResponse } from "@/services/api/types";
@@ -31,9 +36,9 @@ export function SettingsForm({
   const api = useBrowserApi();
   const [isPending, startTransition] = useTransition();
   const [feedback, setFeedback] = useState<{ tone: "success" | "error"; text: string } | null>(null);
-  const [companyName, setCompanyName] = useState(tenant.tenantName ?? "");
-  const [websiteUrl, setWebsiteUrl] = useState(tenant.websiteUrl ?? "");
-  const [supportEmail, setSupportEmail] = useState(tenant.supportEmail ?? "");
+  const [companyName, setCompanyName] = useState(sanitizeTenantName(tenant.tenantName) ?? "");
+  const [websiteUrl, setWebsiteUrl] = useState(sanitizeWebsiteUrl(tenant.websiteUrl) ?? "");
+  const [supportEmail, setSupportEmail] = useState(sanitizeSupportEmail(tenant.supportEmail) ?? "");
   const [industry, setIndustry] = useState(tenant.industry ?? "");
   const [confidenceThreshold, setConfidenceThreshold] = useState(
     typeof tenant.settings.confidenceThreshold === "number" ? tenant.settings.confidenceThreshold : 0.75,

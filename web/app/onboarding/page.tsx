@@ -2,6 +2,7 @@ import { CheckCircle2, Circle } from "lucide-react";
 import Link from "next/link";
 import { Notice } from "@/components/portal/notice";
 import { StatusBadge, statusTone } from "@/components/portal/status-badge";
+import { tenantDisplayName } from "@/lib/tenant-display";
 import { getServerApi } from "@/services/api/server";
 import { ApiError } from "@/services/api/shared";
 import { redirect } from "next/navigation";
@@ -90,8 +91,9 @@ export default async function OnboardingPage() {
     );
     const knowledgeCount = knowledgeBase.entries.length;
     const whatsappReady = ["connected", "healthy", "active"].includes(whatsapp?.status ?? "");
+    const displayName = tenantDisplayName(me, tenant) ?? "\u2014";
     const steps = onboardingSteps({
-      tenantName: tenant.tenantName ?? me.tenantName ?? me.tenantId,
+      tenantName: displayName,
       brandVoiceReady,
       knowledgeCount,
       whatsappReady,
@@ -152,7 +154,7 @@ export default async function OnboardingPage() {
 
           <section className="rounded-[8px] border border-line bg-white">
             <div className="border-b border-line p-5">
-              <h2 className="text-xl font-semibold">{tenant.tenantName ?? me.tenantId} onboarding</h2>
+              <h2 className="text-xl font-semibold">{displayName} onboarding</h2>
               <p className="mt-2 text-sm text-ink/62">Complete the remaining checks before turning on auto-answering.</p>
             </div>
             <div className="divide-y divide-line">
