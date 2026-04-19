@@ -33,7 +33,7 @@ export function statusTone(status: string): keyof typeof toneClasses {
   if (["pending", "warning", "trialing", "escalated"].includes(status)) {
     return "yellow";
   }
-  if (["failed", "blocked", "inactive", "past_due"].includes(status)) {
+  if (["failed", "blocked", "inactive", "past_due", "canceled", "unpaid", "incomplete"].includes(status)) {
     return "red";
   }
   return "neutral";

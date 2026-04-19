@@ -1,7 +1,7 @@
 "use client";
 
-import clsx from "clsx";
 import { OrganizationSwitcher, UserButton } from "@clerk/nextjs";
+import clsx from "clsx";
 import {
   BarChart3,
   BookOpen,
@@ -16,6 +16,8 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import type { MeResponse, TenantResponse } from "@/services/api/types";
+import { tenantDisplayName } from "@/lib/tenant-display";
 
 const navItems = [
   { label: "Overview", href: "/dashboard", icon: LayoutDashboard },
@@ -36,11 +38,20 @@ function isActive(pathname: string, href: string) {
 }
 
 export function PortalShell({
+  me,
+  tenant,
   children,
 }: {
+  me: MeResponse;
+  tenant: TenantResponse;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const nav = me.hasActiveSubscription
+    ? navItems
+    : [{ label: "Settings", href: "/settings", icon: Settings }];
+  const subscriptionLabel = tenant.billing.status.replace("_", " ");
+  const displayName = tenantDisplayName(me, tenant) ?? "\u2014";
 
   return (
     <div className="min-h-screen bg-paper text-ink">
@@ -48,13 +59,13 @@ export function PortalShell({
         <div className="flex h-full flex-col">
           <div className="border-b border-line p-6">
             <Link href="/" className="text-lg font-semibold">
-              SVMP
+              SVMP CS
             </Link>
             <p className="mt-2 text-sm leading-6 text-ink/58">Customer portal</p>
           </div>
 
           <nav className="flex-1 space-y-1 p-4">
-            {navItems.map((item) => {
+            {nav.map((item) => {
               const active = isActive(pathname, item.href);
               const Icon = item.icon;
               return (
@@ -79,10 +90,12 @@ export function PortalShell({
             <div className="rounded-[8px] border border-line bg-paper p-4">
               <div className="flex items-center gap-2 text-sm font-semibold">
                 <Gauge size={17} />
-                Stay Parfums
+                {displayName}
               </div>
               <p className="mt-3 text-sm leading-6 text-ink/62">
-                Active subscription. WhatsApp is healthy.
+                {me.hasActiveSubscription
+                  ? "Subscription is active. Operational pages are available."
+                  : "Subscription access is inactive. Billing is the only available area."}
               </p>
             </div>
           </div>
@@ -93,7 +106,7 @@ export function PortalShell({
         <header className="sticky top-0 z-10 border-b border-line bg-paper/95 backdrop-blur">
           <div className="flex min-h-16 flex-col gap-3 px-4 py-4 md:px-8 lg:flex-row lg:items-center lg:justify-between">
             <nav className="flex gap-2 overflow-x-auto lg:hidden">
-              {navItems.map((item) => (
+              {nav.map((item) => (
                 <Link
                   key={item.href}
                   href={item.href}
@@ -109,26 +122,52 @@ export function PortalShell({
               ))}
             </nav>
             <div>
-              <p className="text-sm font-semibold text-pine">Stay Parfums</p>
+              <p className="text-sm font-semibold text-pine">
+                {displayName}
+              </p>
               <p className="mt-1 text-sm text-ink/58">
-                Tenant: stay. Role: owner. Subscription: active.
+                Tenant: {displayName === "\u2014" ? "\u2014" : me.tenantId}. Role: {me.role}. Subscription: {subscriptionLabel}.
               </p>
             </div>
-            <div className="hidden items-center gap-3 lg:flex">
-              <OrganizationSwitcher
-                afterCreateOrganizationUrl="/dashboard"
-                afterLeaveOrganizationUrl="/login"
-                afterSelectOrganizationUrl="/dashboard"
-                hidePersonal
-              />
-              <UserButton />
+            <div className="flex items-center gap-3">
+              <div className="hidden md:block">
+                <OrganizationSwitcher
+                  hidePersonal
+                  afterSelectOrganizationUrl="/dashboard"
+                  appearance={{
+                    elements: {
+                      organizationSwitcherTrigger:
+                        "rounded-[8px] border border-line bg-white px-3 py-2 text-sm font-semibold",
+                    },
+                  }}
+                />
+              </div>
               <Link
                 href="/settings"
-                className="rounded-[8px] border border-line bg-white px-4 py-2 text-sm font-semibold hover:border-ink"
+                className="hidden rounded-[8px] border border-line bg-white px-4 py-2 text-sm font-semibold hover:border-ink lg:inline-flex"
               >
                 Manage account
               </Link>
+              <UserButton />
             </div>
+          </div>
+          <div className="flex items-center justify-between gap-3 px-4 pb-4 md:hidden">
+            <OrganizationSwitcher
+              hidePersonal
+              afterSelectOrganizationUrl="/dashboard"
+              appearance={{
+                elements: {
+                  organizationSwitcherTrigger:
+                    "rounded-[8px] border border-line bg-white px-3 py-2 text-sm font-semibold",
+                },
+              }}
+            />
+            <Link
+              href="/settings"
+              className="rounded-[8px] border border-line bg-white px-4 py-2 text-sm font-semibold hover:border-ink"
+            >
+              Account
+            </Link>
           </div>
         </header>
         <main className="px-4 py-6 md:px-8 md:py-8">{children}</main>

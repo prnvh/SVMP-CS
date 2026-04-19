@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
 import { ClerkProvider } from "@clerk/nextjs";
+import { isClerkConfigured } from "@/lib/clerk-env";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "SVMP | Governed AI Customer Support",
+  title: "SVMP CS | Governed AI Customer Support",
   description:
-    "SVMP automates WhatsApp customer support with approved knowledge, brand voice controls, confidence thresholds, and governance logs.",
+    "SVMP CS automates WhatsApp customer support with approved knowledge, brand voice controls, confidence thresholds, and governance logs.",
 };
 
 export default function RootLayout({
@@ -13,11 +14,11 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const content = isClerkConfigured() ? <ClerkProvider>{children}</ClerkProvider> : children;
+
   return (
-    <ClerkProvider signInUrl="/login" signUpUrl="/login" afterSignOutUrl="/">
-      <html lang="en">
-        <body>{children}</body>
-      </html>
-    </ClerkProvider>
+    <html lang="en">
+      <body>{content}</body>
+    </html>
   );
 }

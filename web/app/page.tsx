@@ -11,7 +11,7 @@ const flow = [
     detail: "Messages can arrive as fragments, follow-ups, or repeated questions.",
   },
   {
-    label: "SVMP checks approved knowledge",
+    label: "SVMP CS checks approved knowledge",
     detail: "It uses the tenant's FAQ, policies, domains, and brand voice.",
   },
   {
@@ -32,7 +32,7 @@ const outcomes = [
 
 const portalRows = [
   ["Overview", "Deflection rate, human hours saved, resolution time, safety score"],
-  ["Sessions", "Customer question, SVMP answer, confidence, source, escalation reason"],
+  ["Sessions", "Customer question, SVMP CS answer, confidence, source, escalation reason"],
   ["Knowledge base", "Approved FAQs, active state, topic filters, test questions"],
   ["Brand voice", "Tone, words to use, words to avoid, escalation style"],
   ["Governance", "Low-confidence answers, blocked responses, audit trail"],
@@ -41,11 +41,11 @@ const portalRows = [
 const safety = [
   {
     title: "Approved knowledge only",
-    copy: "SVMP answers from the knowledge base and settings the business controls.",
+    copy: "SVMP CS answers from the knowledge base and settings the business controls.",
   },
   {
     title: "Confidence threshold",
-    copy: "If the score is too low, SVMP does not force an answer.",
+    copy: "If the score is too low, SVMP CS does not force an answer.",
   },
   {
     title: "Human escalation",
@@ -58,9 +58,9 @@ const safety = [
 ];
 
 const buildStatus = [
-  ["Backend", "FastAPI runtime with WhatsApp webhook intake"],
-  ["Database", "MongoDB tenants, sessions, knowledge base, governance logs"],
-  ["Portal", "Customer dashboard for paid tenant configuration and monitoring"],
+  ["Backend", "FastAPI runtime handling authenticated dashboard APIs and WhatsApp intake."],
+  ["Data layer", "Tenant, session, knowledge, and governance records stay isolated per organization."],
+  ["Portal", "Paid client workspace for setup, operations, billing, and oversight."],
 ];
 
 function Arrow() {
@@ -74,8 +74,8 @@ export default function Home() {
     <main className="min-h-screen bg-paper text-ink">
       <header className="section-pad border-b border-line bg-paper">
         <nav className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-6">
-          <a href="#" className="text-[15px] font-semibold" aria-label="SVMP home">
-            SVMP
+          <a href="#" className="text-[15px] font-semibold" aria-label="SVMP CS home">
+            SVMP CS
           </a>
           <div className="hidden items-center gap-8 text-[15px] text-ink/70 md:flex">
             {navItems.map((item) => (
@@ -100,7 +100,7 @@ export default function Home() {
               AI support for WhatsApp-first businesses
             </p>
             <h1 className="mt-6 max-w-5xl font-serif text-5xl leading-[1.04] md:text-6xl lg:text-7xl">
-              SVMP answers customer questions from your approved knowledge base.
+              SVMP CS answers customer questions from your approved knowledge base.
             </h1>
             <p className="mt-7 max-w-3xl text-xl leading-9 text-ink/72">
               It connects to WhatsApp, understands fragmented customer messages, answers only when confidence is high, escalates the rest, and shows every decision in a private dashboard.
@@ -166,14 +166,14 @@ export default function Home() {
               A support system, not a loose chatbot.
             </h2>
             <p className="mt-7 text-xl leading-9 text-ink/72">
-              The dashboard is where a business controls what SVMP knows, how it speaks, when it escalates, and what it did in each customer conversation.
+              The dashboard is where a business controls what SVMP CS knows, how it speaks, when it escalates, and what it did in each customer conversation.
             </p>
           </div>
 
           <div className="overflow-hidden rounded-[8px] border border-line bg-white">
             <img
               src="/portal-overview.png"
-              alt="SVMP customer portal overview dashboard"
+              alt="SVMP CS customer portal overview dashboard"
               className="block w-full"
             />
           </div>
@@ -232,7 +232,7 @@ export default function Home() {
               Start where customer conversations already happen.
             </h2>
             <p className="mt-7 text-xl leading-9 text-ink/72">
-              SVMP's first live channel is WhatsApp. Future integrations can come later; the first product is focused on one support flow working well.
+              SVMP CS's first live channel is WhatsApp. Future integrations can come later; the first product is focused on one support flow working well.
             </p>
           </div>
           <div className="overflow-hidden rounded-[8px] border border-line bg-paper">
@@ -251,7 +251,7 @@ export default function Home() {
                 </ul>
               </div>
               <div className="bg-paper p-6">
-                <p className="text-[13px] font-semibold uppercase text-pine">With SVMP</p>
+                <p className="text-[13px] font-semibold uppercase text-pine">With SVMP CS</p>
                 <ul className="mt-8 space-y-5 text-[16px] leading-7 text-ink/70">
                   <li>Safe repeat questions are answered from approved KB entries.</li>
                   <li>Low-confidence questions are escalated with reasons attached.</li>
@@ -267,7 +267,7 @@ export default function Home() {
       <section className="section-pad border-b border-line">
         <div className="mx-auto grid max-w-7xl gap-10 py-14 lg:grid-cols-[0.34fr_1fr]">
           <div>
-            <p className="text-[15px] font-semibold">Build status</p>
+            <p className="text-[15px] font-semibold">Platform</p>
           </div>
           <div className="grid gap-px overflow-hidden rounded-[8px] border border-line bg-line md:grid-cols-3">
             {buildStatus.map(([title, copy]) => (
@@ -283,14 +283,14 @@ export default function Home() {
       <section id="access" className="section-pad">
         <div className="mx-auto grid max-w-7xl gap-12 py-20 lg:grid-cols-[1fr_0.8fr] lg:py-28">
           <div>
-            <p className="text-[15px] font-semibold text-pine">Private rollout</p>
+            <p className="text-[15px] font-semibold text-pine">Access model</p>
             <h2 className="mt-5 max-w-4xl font-serif text-5xl leading-tight md:text-6xl">
-              Built with paid clients before public self-serve.
+              Structured onboarding for paid support teams.
             </h2>
           </div>
           <div>
             <p className="text-xl leading-9 text-ink/72">
-              SVMP is being shaped as a guided deployment first: tenant setup, knowledge base, brand voice, WhatsApp connection, governance review, and then go-live.
+              Each workspace is configured around tenant setup, approved knowledge, brand voice, billing, WhatsApp connection, governance review, and a controlled go-live path.
             </p>
             <a
               href="mailto:hello@svmpsystems.com?subject=SVMP%20demo"
