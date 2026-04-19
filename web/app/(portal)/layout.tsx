@@ -3,6 +3,8 @@ import { ApiError } from "@/services/api/shared";
 import { PortalShell } from "@/components/portal/portal-shell";
 import { redirect } from "next/navigation";
 
+export const dynamic = "force-dynamic";
+
 export default function PortalLayout({
   children,
 }: {

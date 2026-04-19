@@ -35,7 +35,7 @@ export function PreviewLogin({ nextPath = "/dashboard" }: { nextPath?: string })
   return (
     <div className="space-y-5">
       <div className="rounded-[8px] border border-citron bg-citron/20 p-4 text-sm leading-6 text-ink/72">
-        Built-in login is on. The portal only opens for allowed emails with the shared portal password.
+        Temporary preview login is on for this environment. Do not use this mode for paid client production access.
       </div>
 
       <label className="grid gap-2">
@@ -74,8 +74,7 @@ export function PreviewLogin({ nextPath = "/dashboard" }: { nextPath?: string })
       </button>
 
       <div className="rounded-[8px] border border-line bg-paper p-4 text-sm leading-6 text-ink/64">
-        Clerk is paused for now. When we are ready, setting{" "}
-        <span className="font-semibold">NEXT_PUBLIC_PORTAL_AUTH_MODE=clerk</span> turns Clerk back on.
+        Production mode uses Clerk organizations, backend tenant membership, and subscription checks.
       </div>
     </div>
   );

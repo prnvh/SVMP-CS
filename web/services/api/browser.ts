@@ -8,6 +8,8 @@ import { createBrowserApi } from "./shared";
 const clerkJwtTemplate = process.env.NEXT_PUBLIC_CLERK_JWT_TEMPLATE?.trim() || undefined;
 
 export function useBrowserApi() {
+  // Client components only receive preview data after the server has already
+  // admitted a signed preview session. Production defaults to Clerk mode.
   if (isPreviewAuthMode()) {
     return createPreviewApi();
   }

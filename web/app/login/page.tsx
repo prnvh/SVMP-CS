@@ -1,7 +1,11 @@
-import { MagicLinkSignIn } from "@/components/auth/magic-link-sign-in";
+import { ClerkSignInPanel } from "@/components/auth/clerk-sign-in-panel";
 import { PreviewLogin } from "@/components/auth/preview-login";
 import { getAuthSafe } from "@/lib/clerk-auth";
-import { isClerkConfigured } from "@/lib/clerk-env";
+import {
+  authConfigurationIssue,
+  isClerkConfigured,
+  isUnsafePreviewAuthEnabled,
+} from "@/lib/clerk-env";
 import { redirect } from "next/navigation";
 
 const checks = [
@@ -17,6 +21,8 @@ export default async function LoginPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const clerkConfigured = isClerkConfigured();
+  const previewEnabled = isUnsafePreviewAuthEnabled();
+  const configurationIssue = authConfigurationIssue();
   const { userId } = clerkConfigured ? await getAuthSafe() : { userId: null };
   const params = await searchParams;
   const organizationState = params.organization;
@@ -64,15 +70,28 @@ export default async function LoginPage({
             <h2 className="mt-3 text-2xl font-semibold">Welcome back</h2>
             <p className="mt-3 text-sm leading-6 text-ink/62">
               {clerkConfigured
-                ? "Use your invited work email and SVMP CS will send a secure sign-in link for this browser."
-                : "Use the built-in portal password. Tenant access is still resolved on the server before dashboard pages render."}
+                ? "Use your invited account. The backend resolves tenant access from your organization before returning any dashboard data."
+                : previewEnabled
+                  ? "Use the temporary built-in portal password. Tenant access is still resolved on the server before dashboard pages render."
+                  : "Authentication is locked until the production auth environment is configured."}
             </p>
 
             <div className="mt-8">
               {clerkConfigured ? (
-                <MagicLinkSignIn organizationRequired={organizationRequired} />
-              ) : (
+                <>
+                  {organizationRequired ? (
+                    <div className="mb-4 rounded-[8px] border border-rose/30 bg-rose/10 p-4 text-sm leading-6 text-rose">
+                      Choose the client organization after sign-in so SVMP CS can resolve the tenant.
+                    </div>
+                  ) : null}
+                  <ClerkSignInPanel />
+                </>
+              ) : previewEnabled ? (
                 <PreviewLogin nextPath={nextPath} />
+              ) : (
+                <div className="rounded-[8px] border border-rose/30 bg-rose/10 p-4 text-sm leading-6 text-rose">
+                  {configurationIssue}
+                </div>
               )}
             </div>
           </div>

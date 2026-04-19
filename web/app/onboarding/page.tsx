@@ -7,6 +7,8 @@ import { getServerApi } from "@/services/api/server";
 import { ApiError } from "@/services/api/shared";
 import { redirect } from "next/navigation";
 
+export const dynamic = "force-dynamic";
+
 function onboardingSteps({
   tenantName,
   brandVoiceReady,

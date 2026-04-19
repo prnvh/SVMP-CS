@@ -99,6 +99,7 @@ class Settings(BaseSettings):
         """Fail fast when the live runtime is missing required env values."""
 
         missing: list[str] = []
+        production = self.APP_ENV.strip().lower() in {"prod", "production"}
 
         if _missing_string(self.MONGODB_URI):
             missing.append("MONGODB_URI")
@@ -132,6 +133,26 @@ class Settings(BaseSettings):
                 missing.append("NORMALIZED_WEBHOOK_SECRET")
         elif provider != "normalized":
             missing.append("WHATSAPP_PROVIDER")
+
+        dashboard_auth_mode = self.DASHBOARD_AUTH_MODE.strip().lower()
+        if production and dashboard_auth_mode != "clerk":
+            missing.append("DASHBOARD_AUTH_MODE=clerk")
+        if dashboard_auth_mode == "clerk" or production:
+            if _missing_string(self.CLERK_ISSUER):
+                missing.append("CLERK_ISSUER")
+            if _missing_string(self.CLERK_JWKS_URL):
+                missing.append("CLERK_JWKS_URL")
+            if production and _missing_string(self.CLERK_AUDIENCE):
+                missing.append("CLERK_AUDIENCE")
+            if production and _missing_string(self.DASHBOARD_APP_URL):
+                missing.append("DASHBOARD_APP_URL")
+        if production:
+            if self.STRIPE_SECRET_KEY is None or _normalized_secret(self.STRIPE_SECRET_KEY) is None:
+                missing.append("STRIPE_SECRET_KEY")
+            if self.STRIPE_WEBHOOK_SECRET is None or _normalized_secret(self.STRIPE_WEBHOOK_SECRET) is None:
+                missing.append("STRIPE_WEBHOOK_SECRET")
+            if _missing_string(self.STRIPE_PRICE_ID):
+                missing.append("STRIPE_PRICE_ID")
 
         if missing:
             raise ConfigError(

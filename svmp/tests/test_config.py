@@ -160,6 +160,45 @@ def test_validate_runtime_accepts_normalized_provider_with_secret() -> None:
     settings.validate_runtime()
 
 
+def test_validate_runtime_requires_clerk_dashboard_auth_in_production() -> None:
+    """Production should not boot dashboard APIs without Clerk tenant auth."""
+
+    settings = Settings(
+        _env_file=None,
+        APP_ENV="production",
+        MONGODB_URI="mongodb://unit-test",
+        OPENAI_API_KEY="test-key",
+        WHATSAPP_PROVIDER="normalized",
+        NORMALIZED_WEBHOOK_SECRET="internal-secret",
+    )
+
+    with pytest.raises(ConfigError, match="DASHBOARD_AUTH_MODE=clerk"):
+        settings.validate_runtime()
+
+
+def test_validate_runtime_accepts_production_clerk_dashboard_auth() -> None:
+    """Production dashboard auth requires Clerk issuer, JWKS, audience, and app URL."""
+
+    settings = Settings(
+        _env_file=None,
+        APP_ENV="production",
+        MONGODB_URI="mongodb://unit-test",
+        OPENAI_API_KEY="test-key",
+        WHATSAPP_PROVIDER="normalized",
+        NORMALIZED_WEBHOOK_SECRET="internal-secret",
+        DASHBOARD_AUTH_MODE="clerk",
+        CLERK_ISSUER="https://example.clerk.accounts.dev",
+        CLERK_JWKS_URL="https://example.clerk.accounts.dev/.well-known/jwks.json",
+        CLERK_AUDIENCE="svmp-dashboard",
+        DASHBOARD_APP_URL="https://app.svmpsystems.com",
+        STRIPE_SECRET_KEY="sk_live_test",
+        STRIPE_WEBHOOK_SECRET="whsec_test",
+        STRIPE_PRICE_ID="price_test",
+    )
+
+    settings.validate_runtime()
+
+
 def test_tenant_threshold_uses_tenant_value() -> None:
     """Tenant threshold resolves from tenant settings."""
 
