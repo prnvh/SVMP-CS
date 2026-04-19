@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { isPreviewAuthMode } from "@/lib/clerk-env";
 import type { MeResponse, TenantResponse } from "@/services/api/types";
 import { tenantDisplayName } from "@/lib/tenant-display";
 
@@ -52,6 +53,7 @@ export function PortalShell({
     : [{ label: "Settings", href: "/settings", icon: Settings }];
   const subscriptionLabel = tenant.billing.status.replace("_", " ");
   const displayName = tenantDisplayName(me, tenant) ?? "\u2014";
+  const previewAuth = isPreviewAuthMode();
 
   return (
     <div className="min-h-screen bg-paper text-ink">
@@ -130,7 +132,40 @@ export function PortalShell({
               </p>
             </div>
             <div className="flex items-center gap-3">
-              <div className="hidden md:block">
+              {!previewAuth ? (
+                <div className="hidden md:block">
+                  <OrganizationSwitcher
+                    hidePersonal
+                    afterSelectOrganizationUrl="/dashboard"
+                    appearance={{
+                      elements: {
+                        organizationSwitcherTrigger:
+                          "rounded-[8px] border border-line bg-white px-3 py-2 text-sm font-semibold",
+                      },
+                    }}
+                  />
+                </div>
+              ) : null}
+              <Link
+                href="/settings"
+                className="hidden rounded-[8px] border border-line bg-white px-4 py-2 text-sm font-semibold hover:border-ink lg:inline-flex"
+              >
+                Manage account
+              </Link>
+              {previewAuth ? (
+                <Link
+                  href="/login"
+                  className="rounded-[8px] border border-line bg-white px-4 py-2 text-sm font-semibold hover:border-ink"
+                >
+                  Preview user
+                </Link>
+              ) : (
+                <UserButton />
+              )}
+            </div>
+          </div>
+          {previewAuth ? null : (
+            <div className="flex items-center justify-between gap-3 px-4 pb-4 md:hidden">
                 <OrganizationSwitcher
                   hidePersonal
                   afterSelectOrganizationUrl="/dashboard"
@@ -141,34 +176,14 @@ export function PortalShell({
                     },
                   }}
                 />
-              </div>
               <Link
                 href="/settings"
-                className="hidden rounded-[8px] border border-line bg-white px-4 py-2 text-sm font-semibold hover:border-ink lg:inline-flex"
+                className="rounded-[8px] border border-line bg-white px-4 py-2 text-sm font-semibold hover:border-ink"
               >
-                Manage account
+                Account
               </Link>
-              <UserButton />
             </div>
-          </div>
-          <div className="flex items-center justify-between gap-3 px-4 pb-4 md:hidden">
-            <OrganizationSwitcher
-              hidePersonal
-              afterSelectOrganizationUrl="/dashboard"
-              appearance={{
-                elements: {
-                  organizationSwitcherTrigger:
-                    "rounded-[8px] border border-line bg-white px-3 py-2 text-sm font-semibold",
-                },
-              }}
-            />
-            <Link
-              href="/settings"
-              className="rounded-[8px] border border-line bg-white px-4 py-2 text-sm font-semibold hover:border-ink"
-            >
-              Account
-            </Link>
-          </div>
+          )}
         </header>
         <main className="px-4 py-6 md:px-8 md:py-8">{children}</main>
       </div>

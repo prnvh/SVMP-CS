@@ -10,6 +10,7 @@ import {
   sanitizeTenantName,
   sanitizeWebsiteUrl,
 } from "@/lib/tenant-display";
+import { isPreviewAuthMode } from "@/lib/clerk-env";
 import { useBrowserApi } from "@/services/api/browser";
 import { ApiError } from "@/services/api/shared";
 import type { MeResponse, TenantResponse } from "@/services/api/types";
@@ -43,6 +44,7 @@ export function SettingsForm({
   const [confidenceThreshold, setConfidenceThreshold] = useState(
     typeof tenant.settings.confidenceThreshold === "number" ? tenant.settings.confidenceThreshold : 0.75,
   );
+  const previewAuth = isPreviewAuthMode();
 
   function saveSettings() {
     setFeedback(null);
@@ -184,18 +186,22 @@ export function SettingsForm({
         <Panel title="Organization access" eyebrow="Clerk organization">
           <div className="space-y-4">
             <p className="text-sm leading-6 text-ink/62">
-              Tenant access is resolved from the authenticated organization. The browser never selects a tenant manually.
+              {previewAuth
+                ? "Preview mode is using built-in access so the portal can be reviewed without Clerk."
+                : "Tenant access is resolved from the authenticated organization. The browser never selects a tenant manually."}
             </p>
-            <OrganizationSwitcher
-              hidePersonal
-              afterSelectOrganizationUrl="/dashboard"
-              appearance={{
-                elements: {
-                  organizationSwitcherTrigger:
-                    "rounded-[8px] border border-line bg-white px-3 py-2 text-sm font-semibold",
-                },
-              }}
-            />
+            {previewAuth ? null : (
+              <OrganizationSwitcher
+                hidePersonal
+                afterSelectOrganizationUrl="/dashboard"
+                appearance={{
+                  elements: {
+                    organizationSwitcherTrigger:
+                      "rounded-[8px] border border-line bg-white px-3 py-2 text-sm font-semibold",
+                  },
+                }}
+              />
+            )}
             <div className="rounded-[8px] border border-line bg-paper p-4 text-sm leading-6 text-ink/64">
               Active org: {me.organizationId}
             </div>

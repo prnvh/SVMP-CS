@@ -1,4 +1,5 @@
 import { MagicLinkSignIn } from "@/components/auth/magic-link-sign-in";
+import { PreviewLogin } from "@/components/auth/preview-login";
 import { getAuthSafe } from "@/lib/clerk-auth";
 import { isClerkConfigured } from "@/lib/clerk-env";
 import { redirect } from "next/navigation";
@@ -15,7 +16,8 @@ export default async function LoginPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const { userId } = await getAuthSafe();
+  const clerkConfigured = isClerkConfigured();
+  const { userId } = clerkConfigured ? await getAuthSafe() : { userId: null };
   const params = await searchParams;
   const organizationState = params.organization;
   const organizationRequired =
@@ -25,8 +27,6 @@ export default async function LoginPage({
   if (userId) {
     redirect("/dashboard");
   }
-
-  const clerkConfigured = isClerkConfigured();
 
   return (
     <main className="min-h-screen bg-paper text-ink">
@@ -58,16 +58,16 @@ export default async function LoginPage({
             <p className="text-sm font-semibold text-pine">Portal access</p>
             <h2 className="mt-3 text-2xl font-semibold">Welcome back</h2>
             <p className="mt-3 text-sm leading-6 text-ink/62">
-              Use your invited work email and SVMP CS will send a secure sign-in link for this browser.
+              {clerkConfigured
+                ? "Use your invited work email and SVMP CS will send a secure sign-in link for this browser."
+                : "Open the in-app preview portal now. Production identity checks can come back when Clerk mode is enabled."}
             </p>
 
             <div className="mt-8">
               {clerkConfigured ? (
                 <MagicLinkSignIn organizationRequired={organizationRequired} />
               ) : (
-                <div className="rounded-[8px] border border-line bg-paper p-4 text-sm leading-6 text-ink/64">
-                  Authentication is not configured in this deployment yet. Set the Clerk publishable and secret keys in the live environment, then refresh this page.
-                </div>
+                <PreviewLogin />
               )}
             </div>
           </div>
