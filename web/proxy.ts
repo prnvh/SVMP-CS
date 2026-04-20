@@ -17,10 +17,13 @@ const isProtectedRoute = createRouteMatcher([
 
 const authProxy = clerkMiddleware(async (auth, request) => {
   if (isProtectedRoute(request)) {
-    await auth.protect({
-      unauthenticatedUrl: "/login",
-      unauthorizedUrl: "/login",
-    });
+    const { userId } = await auth();
+
+    if (!userId) {
+      const loginUrl = new URL("/login", request.url);
+      loginUrl.searchParams.set("next", request.nextUrl.pathname);
+      return NextResponse.redirect(loginUrl);
+    }
   }
 });
 
