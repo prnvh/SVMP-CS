@@ -14,7 +14,7 @@ SVMP uses four separate concepts:
 User             -> a human signing in through Clerk
 Organization     -> the business account in Clerk
 Tenant           -> the SVMP tenantId used in MongoDB
-Subscription     -> Stripe billing state for the tenant
+Subscription     -> manually approved billing state for pilots, payment-provider state later
 ```
 
 The important mapping is:
@@ -105,7 +105,7 @@ Cannot edit tenant configuration or billing.
 
 ## Subscription Status
 
-Subscription state comes from Stripe webhooks and is stored in MongoDB.
+Subscription state is stored in MongoDB. For pilots, SVMP manually marks a tenant as `trialing` or `active` after payment is accepted.
 
 Recommended statuses:
 
@@ -127,20 +127,25 @@ trialing or active
 
 When subscription is inactive, users should only see billing recovery screens and enough tenant context to understand what happened.
 
-## Stripe Rules
+## Manual Pilot Billing Rules
 
-Stripe Checkout and Billing Portal sessions are created by the backend.
+During pilots, SVMP does not require a payment gateway.
 
-Stripe webhooks are the source of truth for subscription activation.
+Manual approval is the source of truth for subscription activation.
 
 Rules:
 
+- accept payment outside the app
+- update `billing_subscriptions.status` to `active` or `trialing`
+- mirror current billing status onto the tenant document as a dashboard summary
+- do not activate access from a frontend-only action
+
+Payment gateway rules for Stripe/Razorpay can be re-enabled later:
+
 - verify webhook signatures
-- store Stripe event ids in `provider_events`
+- store provider event ids in `provider_events`
 - process events idempotently
 - update `billing_subscriptions`
-- mirror current billing status onto the tenant document only as a convenience
-- do not activate access from a frontend success redirect alone
 
 ## Mongo Collections
 
@@ -170,15 +175,13 @@ Indexes:
 
 ### `billing_subscriptions`
 
-Purpose: store Stripe customer and subscription state by tenant.
+Purpose: store manual or provider subscription state by tenant.
 
 Shape:
 
 ```json
 {
   "tenantId": "stay",
-  "stripeCustomerId": "cus_123",
-  "stripeSubscriptionId": "sub_123",
   "status": "active",
   "currentPeriodEnd": "ISODate",
   "priceId": "price_123",
@@ -190,8 +193,7 @@ Shape:
 Indexes:
 
 - unique `tenantId`
-- `stripeCustomerId`
-- `stripeSubscriptionId`
+- optional provider customer/subscription ids when a gateway is enabled
 
 ### `integration_status`
 
@@ -289,8 +291,7 @@ The `tenants` document should eventually include:
   },
   "billing": {
     "status": "active",
-    "stripeCustomerId": "cus_123",
-    "stripeSubscriptionId": "sub_123"
+    "status": "active"
   },
   "onboarding": {
     "status": "completed",
@@ -329,7 +330,8 @@ Before paid users rely on the portal:
 - enforce subscription status on the backend
 - scope every query by resolved tenant
 - write audit logs for KB, brand voice, settings, integrations, and billing-sensitive changes
-- handle Stripe webhooks idempotently
+- handle manual billing activation safely
+- handle payment-provider webhooks idempotently when a gateway is enabled
 - handle provider webhooks idempotently
 - avoid storing provider credentials in plain text
 - add error states, loading states, and empty states in the UI

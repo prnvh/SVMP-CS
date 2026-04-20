@@ -94,6 +94,7 @@ class Settings(BaseSettings):
     STRIPE_SECRET_KEY: SecretStr | None = None
     STRIPE_WEBHOOK_SECRET: SecretStr | None = None
     STRIPE_PRICE_ID: str | None = None
+    BILLING_MODE: str = "manual"
 
     def validate_runtime(self) -> None:
         """Fail fast when the live runtime is missing required env values."""
@@ -146,7 +147,10 @@ class Settings(BaseSettings):
                 missing.append("CLERK_AUDIENCE")
             if production and _missing_string(self.DASHBOARD_APP_URL):
                 missing.append("DASHBOARD_APP_URL")
-        if production:
+        billing_mode = self.BILLING_MODE.strip().lower()
+        if billing_mode not in {"manual", "stripe"}:
+            missing.append("BILLING_MODE")
+        if billing_mode == "stripe":
             if self.STRIPE_SECRET_KEY is None or _normalized_secret(self.STRIPE_SECRET_KEY) is None:
                 missing.append("STRIPE_SECRET_KEY")
             if self.STRIPE_WEBHOOK_SECRET is None or _normalized_secret(self.STRIPE_WEBHOOK_SECRET) is None:

@@ -10,7 +10,7 @@ Provider webhook:
 /webhook
 ```
 
-Stripe webhook:
+Future payment-provider webhook:
 
 ```text
 /api/billing/webhook
@@ -67,8 +67,9 @@ Allowed when inactive:
 
 - `GET /api/me`
 - `GET /api/tenant`
-- `POST /api/billing/create-checkout-session`
-- `POST /api/billing/create-portal-session`
+- manual pilot billing is activated by backend/Mongo admin action
+- `POST /api/billing/create-checkout-session` only when gateway billing is enabled
+- `POST /api/billing/create-portal-session` only when gateway billing is enabled
 
 All operational tenant data should require active subscription status.
 
@@ -326,7 +327,7 @@ This should not create a real customer session.
 
 ### `POST /api/billing/create-checkout-session`
 
-Purpose: create a Stripe Checkout session.
+Purpose: create a payment checkout session when gateway billing is enabled.
 
 Allowed roles:
 
@@ -334,7 +335,7 @@ Allowed roles:
 
 ### `POST /api/billing/create-portal-session`
 
-Purpose: create a Stripe Billing Portal session.
+Purpose: create a payment billing portal session when gateway billing is enabled.
 
 Allowed roles:
 
@@ -342,11 +343,11 @@ Allowed roles:
 
 ### `POST /api/billing/webhook`
 
-Purpose: receive Stripe subscription events.
+Purpose: receive payment-provider subscription events when gateway billing is enabled.
 
 Rules:
 
-- verify Stripe signature
+- verify provider signature
 - store provider event id
 - process events idempotently
 - update tenant subscription state
@@ -377,4 +378,4 @@ Minimum API tests:
 - all reads and writes are tenant-scoped
 - KB edits write audit logs
 - brand voice edits write audit logs
-- Stripe webhook is idempotent
+- payment-provider webhook is idempotent when gateway billing is enabled

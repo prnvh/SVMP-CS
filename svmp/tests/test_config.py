@@ -53,6 +53,7 @@ def test_settings_defaults_load() -> None:
     assert loaded.STRIPE_SECRET_KEY is None
     assert loaded.STRIPE_WEBHOOK_SECRET is None
     assert loaded.STRIPE_PRICE_ID is None
+    assert loaded.BILLING_MODE == "manual"
 
 
 def test_settings_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -176,8 +177,8 @@ def test_validate_runtime_requires_clerk_dashboard_auth_in_production() -> None:
         settings.validate_runtime()
 
 
-def test_validate_runtime_accepts_production_clerk_dashboard_auth() -> None:
-    """Production dashboard auth requires Clerk issuer, JWKS, audience, and app URL."""
+def test_validate_runtime_accepts_production_clerk_dashboard_auth_with_manual_billing() -> None:
+    """Manual pilot billing should not require Stripe keys."""
 
     settings = Settings(
         _env_file=None,
@@ -191,12 +192,31 @@ def test_validate_runtime_accepts_production_clerk_dashboard_auth() -> None:
         CLERK_JWKS_URL="https://example.clerk.accounts.dev/.well-known/jwks.json",
         CLERK_AUDIENCE="svmp-dashboard",
         DASHBOARD_APP_URL="https://app.svmpsystems.com",
-        STRIPE_SECRET_KEY="sk_live_test",
-        STRIPE_WEBHOOK_SECRET="whsec_test",
-        STRIPE_PRICE_ID="price_test",
     )
 
     settings.validate_runtime()
+
+
+def test_validate_runtime_requires_stripe_values_when_gateway_billing_is_enabled() -> None:
+    """Stripe settings are only required when the runtime opts into Stripe billing."""
+
+    settings = Settings(
+        _env_file=None,
+        APP_ENV="production",
+        MONGODB_URI="mongodb://unit-test",
+        OPENAI_API_KEY="test-key",
+        WHATSAPP_PROVIDER="normalized",
+        NORMALIZED_WEBHOOK_SECRET="internal-secret",
+        DASHBOARD_AUTH_MODE="clerk",
+        CLERK_ISSUER="https://example.clerk.accounts.dev",
+        CLERK_JWKS_URL="https://example.clerk.accounts.dev/.well-known/jwks.json",
+        CLERK_AUDIENCE="svmp-dashboard",
+        DASHBOARD_APP_URL="https://app.svmpsystems.com",
+        BILLING_MODE="stripe",
+    )
+
+    with pytest.raises(ConfigError, match="STRIPE_SECRET_KEY"):
+        settings.validate_runtime()
 
 
 def test_tenant_threshold_uses_tenant_value() -> None:

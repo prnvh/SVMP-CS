@@ -45,6 +45,7 @@ export function SettingsForm({
     typeof tenant.settings.confidenceThreshold === "number" ? tenant.settings.confidenceThreshold : 0.75,
   );
   const previewAuth = isPreviewAuthMode();
+  const gatewayBilling = process.env.NEXT_PUBLIC_BILLING_MODE?.trim().toLowerCase() === "stripe";
 
   function saveSettings() {
     setFeedback(null);
@@ -78,11 +79,11 @@ export function SettingsForm({
           window.location.href = session.url;
           return;
         }
-        setFeedback({ tone: "error", text: "Stripe checkout did not return a redirect URL." });
+        setFeedback({ tone: "error", text: "Payment checkout did not return a redirect URL." });
       } catch (error) {
         setFeedback({
           tone: "error",
-          text: errorMessage(error, "Unable to open Stripe checkout."),
+          text: errorMessage(error, "Unable to open payment checkout."),
         });
       }
     });
@@ -97,7 +98,7 @@ export function SettingsForm({
           window.location.href = session.url;
           return;
         }
-        setFeedback({ tone: "error", text: "Stripe billing portal did not return a redirect URL." });
+        setFeedback({ tone: "error", text: "Payment billing portal did not return a redirect URL." });
       } catch (error) {
         setFeedback({
           tone: "error",
@@ -114,8 +115,8 @@ export function SettingsForm({
       <div className="space-y-6">
         {showBillingRequired ? (
           <Notice
-            title="Billing update required"
-            copy="Operational pages stay locked until this tenant has an active or trialing subscription. Update billing here to reopen the full portal."
+            title="Manual approval required"
+            copy="Operational pages stay locked until SVMP marks this tenant as active or trialing after manual payment acceptance."
             tone="warning"
           />
         ) : null}
@@ -216,30 +217,37 @@ export function SettingsForm({
               <p className="font-semibold">Paid access</p>
               <p className="mt-2 text-sm text-ink/60">
                 {inactive
-                  ? "This workspace is inactive. Billing is the only area currently available."
-                  : "Operational dashboard APIs are available for this tenant."}
+                  ? "This workspace is inactive until SVMP manually approves paid access."
+                  : "Paid access is active for this tenant."}
               </p>
             </div>
             <StatusBadge tone={statusTone(tenant.billing.status)}>{tenant.billing.status}</StatusBadge>
           </div>
-          <div className="mt-4 flex flex-wrap gap-2">
-            <button
-              type="button"
-              className="rounded-[8px] bg-ink px-4 py-3 text-sm font-semibold text-paper hover:bg-pine disabled:cursor-not-allowed disabled:opacity-60"
-              onClick={goToCheckout}
-              disabled={isPending}
-            >
-              Open checkout
-            </button>
-            <button
-              type="button"
-              className="rounded-[8px] border border-line bg-white px-4 py-3 text-sm font-semibold hover:border-ink disabled:cursor-not-allowed disabled:opacity-60"
-              onClick={goToBillingPortal}
-              disabled={isPending}
-            >
-              Open billing portal
-            </button>
-          </div>
+          {gatewayBilling ? (
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="rounded-[8px] bg-ink px-4 py-3 text-sm font-semibold text-paper hover:bg-pine disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={goToCheckout}
+                disabled={isPending}
+              >
+                Open checkout
+              </button>
+              <button
+                type="button"
+                className="rounded-[8px] border border-line bg-white px-4 py-3 text-sm font-semibold hover:border-ink disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={goToBillingPortal}
+                disabled={isPending}
+              >
+                Open billing portal
+              </button>
+            </div>
+          ) : (
+            <div className="mt-4 rounded-[8px] border border-line bg-paper p-4 text-sm leading-6 text-ink/64">
+              Pilot billing is handled manually. After payment is accepted, set this tenant's subscription status to
+              active or trialing in MongoDB.
+            </div>
+          )}
         </Panel>
 
         <Panel title="API and webhooks" eyebrow="Endpoints">
@@ -256,12 +264,14 @@ export function SettingsForm({
                 https://api.svmpsystems.com/webhook
               </p>
             </div>
-            <div>
-              <p className="font-semibold">Stripe webhook</p>
-              <p className="mt-2 break-all rounded-[8px] bg-mist px-3 py-2 text-ink/68">
-                https://api.svmpsystems.com/api/billing/webhook
-              </p>
-            </div>
+            {gatewayBilling ? (
+              <div>
+                <p className="font-semibold">Payment webhook</p>
+                <p className="mt-2 break-all rounded-[8px] bg-mist px-3 py-2 text-ink/68">
+                  https://api.svmpsystems.com/api/billing/webhook
+                </p>
+              </div>
+            ) : null}
           </div>
         </Panel>
 

@@ -37,12 +37,12 @@ DASHBOARD_CORS_ORIGINS=https://svmp-cs.vercel.app,https://app.svmpsystems.com
 CLERK_ISSUER=https://your-clerk-issuer
 CLERK_JWKS_URL=https://your-clerk-issuer/.well-known/jwks.json
 CLERK_AUDIENCE=svmp-dashboard
-STRIPE_SECRET_KEY=sk_live_...
-STRIPE_WEBHOOK_SECRET=whsec_...
-STRIPE_PRICE_ID=price_...
+BILLING_MODE=manual
 ```
 
 Keep the existing MongoDB, OpenAI, and WhatsApp provider secrets configured too.
+
+Stripe is not required for pilots. Paid access is manually accepted by setting the tenant subscription status to `active` or `trialing` in MongoDB.
 
 ## Access Setup
 
@@ -64,6 +64,14 @@ Keep the existing MongoDB, OpenAI, and WhatsApp provider secrets configured too.
 
 The browser never sends or chooses `tenantId`. The backend resolves it from `tenant_memberships`.
 
+For manual pilots, the same command can mark the tenant active with:
+
+```powershell
+--subscription-status active
+```
+
+That writes/updates `billing_subscriptions` and mirrors `billing.status` on the tenant document.
+
 ## Sanity Checks
 
 - Incognito `/dashboard` redirects to `/login`.
@@ -71,5 +79,5 @@ The browser never sends or chooses `tenantId`. The backend resolves it from `ten
 - `/api/me` returns exactly one tenant context.
 - Dashboard API requests include a Clerk bearer token.
 - FastAPI rejects dashboard API requests without auth.
-- Operational APIs return `402` when subscription status is not `active` or `trialing`.
+- Operational APIs return `402` when manual subscription status is not `active` or `trialing`.
 - KB, brand voice, settings, and WhatsApp edits create audit logs.

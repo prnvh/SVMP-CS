@@ -46,7 +46,7 @@ The current repository already has `svmp/`, `scripts/`, and `docs/`. The `web/` 
 - Charts: Recharts
 - Auth: Clerk
 - Login: Google OAuth plus email fallback
-- Billing: Stripe subscriptions
+- Billing: manual pilot approval first; Stripe/Razorpay gateway later
 - Backend: existing FastAPI app
 - Database: MongoDB Atlas
 - Web hosting: Vercel
@@ -63,7 +63,7 @@ Provider webhooks and billing webhooks must stay distinct:
 
 ```text
 /webhook                  # WhatsApp provider webhook
-/api/billing/webhook      # Stripe billing webhook
+/api/billing/webhook      # future payment-provider webhook
 ```
 
 ## MVP Scope
@@ -248,11 +248,11 @@ Build overview, sessions, knowledge base, brand voice, governance, metrics, inte
 
 ### Milestone 6: Billing And Onboarding
 
-Wire Stripe checkout, billing portal, subscription webhooks, and the onboarding wizard.
+Wire manual pilot billing, tenant access approval, and the onboarding wizard. Payment-provider checkout can be added after incorporation.
 
 ### Milestone 7: Staging Rollout
 
-Deploy staging, connect a test tenant, validate auth, tenant isolation, Stripe webhooks, WhatsApp status, and dashboard data.
+Deploy staging, connect a test tenant, validate auth, tenant isolation, manual billing status, WhatsApp status, and dashboard data.
 
 ## Review Rule
 
