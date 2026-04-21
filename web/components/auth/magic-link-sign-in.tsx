@@ -151,20 +151,6 @@ export function MagicLinkSignIn() {
           {isSending ? "Sending link..." : "Email me a sign-in link"}
         </button>
       </div>
-
-      <div className="rounded-[8px] border border-line bg-paper p-4 text-sm leading-6 text-ink/64">
-        <p className="font-semibold text-ink">How this works</p>
-        <p className="mt-2">
-          Use the invited email for your tenant. The browser never chooses a tenant manually;
-          access is resolved from your MongoDB verified user record on the backend.
-        </p>
-        {submittedEmail ? (
-          <p className="mt-2">
-            Waiting for verification on <span className="font-semibold text-ink">{submittedEmail}</span>.
-          </p>
-        ) : null}
-      </div>
-
       <p className="text-sm leading-6 text-ink/62">
         Need a new invite or a different tenant? Continue with{" "}
         <Link href="/signup" className="font-semibold text-ink">
