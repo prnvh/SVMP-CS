@@ -57,33 +57,51 @@ export default async function LoginPage({
         </section>
 
         <section className="flex items-center justify-center p-6 md:p-10">
-          <div className="w-full max-w-md rounded-[8px] border border-line bg-white p-6">
-            <p className="text-sm font-semibold text-pine">Portal access</p>
-            <h2 className="mt-3 text-2xl font-semibold">Welcome back</h2>
-            <p className="mt-3 text-sm leading-6 text-ink/62">
-              {clerkConfigured
-                ? "Use your invited work email and SVMP CS will send a secure sign-in link for this browser."
-                : previewEnabled
-                  ? "Use the temporary built-in portal password. Tenant access is still resolved on the server before dashboard pages render."
-                  : "Authentication is locked until the production auth environment is configured."}
-            </p>
+          <div className="w-full max-w-xl space-y-5">
+            <div className="rounded-[8px] border border-line bg-white p-6">
+              <p className="text-sm font-semibold text-pine">Portal access</p>
+              <h2 className="mt-3 text-2xl font-semibold">Welcome back</h2>
+              <p className="mt-3 text-sm leading-6 text-ink/62">
+                {clerkConfigured
+                  ? "Use your invited work email and SVMP CS will send a secure sign-in link for this browser."
+                  : previewEnabled
+                    ? "Use the temporary built-in portal password. Tenant access is still resolved on the server before dashboard pages render."
+                    : "Authentication is locked until the production auth environment is configured."}
+              </p>
 
-            {backendUnavailable ? (
-              <div className="mt-4 rounded-[8px] border border-[#AA8A24]/20 bg-[#F8E7A6] p-4 text-sm leading-6 text-[#6D5613]">
-                The dashboard is temporarily unavailable, so sign in starts here until the backend connection is restored.
-              </div>
-            ) : null}
-
-            <div className="mt-8">
-              {clerkConfigured ? (
-                <MagicLinkSignIn />
-              ) : previewEnabled ? (
-                <PreviewLogin nextPath={nextPath} />
-              ) : (
-                <div className="rounded-[8px] border border-rose/30 bg-rose/10 p-4 text-sm leading-6 text-rose">
-                  {configurationIssue}
+              {backendUnavailable ? (
+                <div className="mt-4 rounded-[8px] border border-[#AA8A24]/20 bg-[#F8E7A6] p-4 text-sm leading-6 text-[#6D5613]">
+                  The dashboard is temporarily unavailable, so sign in starts here until the backend connection is restored.
                 </div>
-              )}
+              ) : null}
+
+              <div className="mt-8">
+                {clerkConfigured ? (
+                  <MagicLinkSignIn />
+                ) : previewEnabled ? (
+                  <PreviewLogin nextPath={nextPath} />
+                ) : (
+                  <div className="rounded-[8px] border border-rose/30 bg-rose/10 p-4 text-sm leading-6 text-rose">
+                    {configurationIssue}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="overflow-hidden rounded-[8px] border border-line bg-white">
+              <div className="border-b border-line px-5 py-4">
+                <p className="text-sm font-semibold text-pine">Portal preview</p>
+                <p className="mt-2 text-sm leading-6 text-ink/62">
+                  Sessions, knowledge base, governance, and rollout visibility in one place.
+                </p>
+              </div>
+              <div className="bg-[#F7F8F4] p-3">
+                <img
+                  src="/portal-overview.png"
+                  alt="SVMP CS customer portal overview"
+                  className="block w-full rounded-[8px] border border-line"
+                />
+              </div>
             </div>
           </div>
         </section>
