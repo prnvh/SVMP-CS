@@ -10,249 +10,99 @@ import type {
 } from "./types";
 import type { PreviewSession } from "@/lib/preview-auth";
 
-const now = "2026-04-19T10:30:00.000Z";
+const now = new Date().toISOString();
 
-const previewMe: MeResponse = {
-  userId: "preview-owner",
-  email: "prnvvh@gmail.com",
-  organizationId: "stay",
-  tenantId: "stay",
-  tenantName: "Stay Parfums",
-  role: "owner",
-  subscriptionStatus: "active",
-  hasActiveSubscription: true,
-  allowedActions: ["billing", "team", "integrations", "knowledge_base", "brand_voice", "sessions", "metrics"],
-};
-
-const previewTenant: TenantResponse = {
-  tenantId: "stay",
-  tenantName: "Stay Parfums",
-  websiteUrl: "https://stayparfums.com",
-  industry: "Beauty and fragrance",
-  supportEmail: "support@stayparfums.com",
-  domains: ["shipping", "returns", "stock", "orders"],
-  settings: {
-    confidenceThreshold: 0.75,
-    autoAnswerEnabled: true,
-  },
-  brandVoice: {
-    tone: "Warm, polished, premium, and concise",
-    use: ["concise", "helpful", "confident"],
-    avoid: ["overpromising", "slang", "guessing"],
-    escalationStyle: "Apologetic and clear, with a direct handoff to the support team.",
-    exampleReplies: [
-      "I can help with that. Based on the approved policy, your order qualifies for standard shipping.",
-      "I do not want to guess on this one, so I am sending it to the Stay Parfums team.",
-    ],
-  },
-  onboarding: {
-    status: "completed",
-    steps: {
-      profile: true,
-      brandVoice: true,
-      knowledgeBase: true,
-      whatsapp: true,
-      testConversation: true,
-    },
-  },
-  billing: {
-    status: "active",
-    hasActiveSubscription: true,
-  },
-};
-
-const previewKnowledgeBase: KnowledgeBaseEntry[] = [
-  {
-    id: "kb_shipping",
-    domainId: "shipping",
-    question: "Do you offer free shipping?",
-    answer: "Free shipping is available on eligible orders. If the order does not qualify, SVMP escalates instead of guessing.",
-    tags: ["shipping", "checkout"],
-    active: true,
-    createdAt: "2026-04-15T09:00:00.000Z",
-    updatedAt: "2026-04-18T12:10:00.000Z",
-  },
-  {
-    id: "kb_returns",
-    domainId: "returns",
-    question: "Can I return an opened fragrance?",
-    answer: "Opened fragrance returns require human review. SVMP should explain that support will confirm the next step.",
-    tags: ["returns", "policy"],
-    active: true,
-    createdAt: "2026-04-16T09:00:00.000Z",
-    updatedAt: "2026-04-18T12:30:00.000Z",
-  },
-  {
-    id: "kb_stock",
-    domainId: "stock",
-    question: "When will the Discovery Set restock?",
-    answer: "The Discovery Set restock date is not confirmed yet. Customers can join the waitlist for the first update.",
-    tags: ["stock", "waitlist"],
-    active: true,
-    createdAt: "2026-04-17T09:00:00.000Z",
-    updatedAt: "2026-04-18T14:05:00.000Z",
-  },
-];
-
-const previewSessions: SessionSummary[] = [
-  {
-    id: "session_shipping_001",
-    provider: "whatsapp",
-    status: "resolved",
-    dashboardStatus: "resolved",
-    customer: "Ava M.",
-    question: "Do you offer free shipping?",
-    latestMessage: "Do you offer free shipping?",
-    answer: "Free shipping is available on eligible orders.",
-    source: "kb_shipping",
-    confidence: 0.91,
-    similarity: 0.88,
-    messageCount: 5,
-    createdAt: "2026-04-19T08:30:00.000Z",
-    updatedAt: "2026-04-19T08:33:00.000Z",
-    transcript: [
-      { sender: "customer", text: "Do you offer free shipping?", timestamp: "2026-04-19T08:30:00.000Z" },
-      { sender: "svmp", text: "Free shipping is available on eligible orders.", timestamp: "2026-04-19T08:31:00.000Z" },
-    ],
-  },
-  {
-    id: "session_returns_002",
-    provider: "whatsapp",
-    status: "escalated",
-    dashboardStatus: "escalated",
-    customer: "Nina R.",
-    question: "Can I return a fragrance I opened yesterday?",
-    latestMessage: "Can I return a fragrance I opened yesterday?",
-    answer: "This needs human review before SVMP answers.",
-    source: "kb_returns",
-    confidence: 0.62,
-    similarity: 0.6,
-    escalationReason: "Return eligibility depends on order condition.",
-    messageCount: 4,
-    createdAt: "2026-04-19T09:05:00.000Z",
-    updatedAt: "2026-04-19T09:07:00.000Z",
-    transcript: [
-      { sender: "customer", text: "Can I return a fragrance I opened yesterday?", timestamp: "2026-04-19T09:05:00.000Z" },
-      { sender: "svmp", text: "I do not want to guess on this one, so I am sending it to the Stay Parfums team.", timestamp: "2026-04-19T09:06:00.000Z" },
-    ],
-  },
-  {
-    id: "session_stock_003",
-    provider: "whatsapp",
-    status: "pending",
-    dashboardStatus: "pending",
-    customer: "Dev K.",
-    question: "Is the Discovery Set available this week?",
-    latestMessage: "Is the Discovery Set available this week?",
-    source: "kb_stock",
-    confidence: 0.78,
-    similarity: 0.73,
-    messageCount: 3,
-    createdAt: "2026-04-19T10:00:00.000Z",
-    updatedAt: "2026-04-19T10:02:00.000Z",
-    transcript: [
-      { sender: "customer", text: "Is the Discovery Set available this week?", timestamp: "2026-04-19T10:00:00.000Z" },
-    ],
-  },
-];
-
-const previewGovernanceLogs: GovernanceLog[] = [
-  {
-    id: "gov_001",
-    decision: "answered",
-    question: "Do you offer free shipping?",
-    reason: "Matched approved shipping FAQ above confidence threshold.",
-    source: "kb_shipping",
-    similarity: 0.88,
-    groundedness: 0.92,
-    safety: 0.98,
-    timestamp: "2026-04-19T08:31:00.000Z",
-  },
-  {
-    id: "gov_002",
-    decision: "escalated",
-    question: "Can I return a fragrance I opened yesterday?",
-    reason: "Confidence was below threshold and policy depends on item condition.",
-    source: "kb_returns",
-    similarity: 0.6,
-    groundedness: 0.76,
-    safety: 0.96,
-    timestamp: "2026-04-19T09:06:00.000Z",
-  },
-  {
-    id: "gov_003",
-    action: "knowledge_base.updated",
-    actorEmail: "prnvvh@gmail.com",
-    resourceType: "knowledge_base",
-    resourceId: "kb_stock",
-    reason: "Restock answer updated for current waitlist guidance.",
-    timestamp: "2026-04-18T14:05:00.000Z",
-  },
-];
+const previewKnowledgeBase: KnowledgeBaseEntry[] = [];
+const previewSessions: SessionSummary[] = [];
+const previewGovernanceLogs: GovernanceLog[] = [];
 
 const previewIntegrations: IntegrationStatus[] = [
   {
-    tenantId: "stay",
+    tenantId: "preview",
     provider: "whatsapp",
-    status: "connected",
-    health: "healthy",
-    setupWarnings: [],
-    metadata: {
-      provider: "twilio",
-      lastSync: now,
-    },
-    updatedAt: now,
-  },
-  {
-    tenantId: "stay",
-    provider: "slack",
-    status: "coming_soon",
+    status: "not_connected",
     health: "unknown",
-    setupWarnings: ["Slack is not part of MVP."],
-    updatedAt: now,
-  },
-  {
-    tenantId: "stay",
-    provider: "shopify",
-    status: "coming_soon",
-    health: "unknown",
-    setupWarnings: ["Shopify is planned after WhatsApp support is stable."],
-    updatedAt: now,
+    setupWarnings: ["WhatsApp is not connected for this workspace yet."],
+    updatedAt: null,
   },
 ];
 
-function activeKbCount() {
-  return previewKnowledgeBase.filter((entry) => entry.active).length;
+function overviewMetrics() {
+  return {
+    deflectionRate: 0,
+    aiResolved: 0,
+    humanEscalated: 0,
+    activeSessions: 0,
+    activeKnowledgeEntries: 0,
+    humanHoursSaved: 0,
+    safetyScore: null,
+  };
 }
 
-function overviewMetrics() {
-  const answered = previewGovernanceLogs.filter((log) => log.decision === "answered").length;
-  const escalated = previewGovernanceLogs.filter((log) => log.decision === "escalated").length;
-  const total = Math.max(answered + escalated, 1);
-
+function emptySession(id: string): SessionSummary {
   return {
-    deflectionRate: answered / total,
-    aiResolved: answered,
-    humanEscalated: escalated,
-    activeSessions: previewSessions.filter((session) => session.dashboardStatus !== "resolved").length,
-    activeKnowledgeEntries: activeKbCount(),
-    humanHoursSaved: answered * 0.35,
-    safetyScore: 98,
+    id,
+    provider: "whatsapp",
+    status: "pending",
+    dashboardStatus: "pending",
+    latestMessage: null,
+    question: null,
+    customer: null,
+    confidence: null,
+    similarity: null,
+    source: null,
+    answer: null,
+    escalationReason: null,
+    transcript: [],
+    messages: [],
+    createdAt: null,
+    updatedAt: null,
   };
 }
 
 export function createPreviewApi(session?: Pick<PreviewSession, "email" | "tenantId" | "tenantName" | "role">): BrowserApi {
-  const me = {
-    ...previewMe,
-    email: session?.email ?? previewMe.email,
-    tenantId: session?.tenantId ?? previewMe.tenantId,
-    tenantName: session?.tenantName ?? previewMe.tenantName,
-    role: session?.role ?? previewMe.role,
+  const tenantId = session?.tenantId?.trim() || "preview";
+  const tenantName = session?.tenantName?.trim() || "Preview workspace";
+  const role = session?.role ?? "owner";
+
+  const me: MeResponse = {
+    userId: "preview-user",
+    email: session?.email ?? null,
+    organizationId: tenantId,
+    tenantId,
+    tenantName,
+    role,
+    subscriptionStatus: "none",
+    hasActiveSubscription: false,
+    allowedActions: ["billing", "team", "integrations", "knowledge_base", "brand_voice", "sessions", "metrics"],
   };
-  const tenant = {
-    ...previewTenant,
-    tenantId: session?.tenantId ?? previewTenant.tenantId,
-    tenantName: session?.tenantName ?? previewTenant.tenantName,
+
+  const tenant: TenantResponse = {
+    tenantId,
+    tenantName,
+    websiteUrl: null,
+    industry: null,
+    supportEmail: null,
+    domains: [],
+    settings: {
+      confidenceThreshold: 0.75,
+      autoAnswerEnabled: false,
+    },
+    brandVoice: {},
+    onboarding: {
+      status: "pending",
+      steps: {
+        profile: false,
+        brandVoice: false,
+        knowledgeBase: false,
+        whatsapp: false,
+        testConversation: false,
+      },
+    },
+    billing: {
+      status: "none",
+      hasActiveSubscription: false,
+    },
   };
 
   return {
@@ -270,125 +120,105 @@ export function createPreviewApi(session?: Pick<PreviewSession, "email" | "tenan
           : tenant.settings,
     }),
     getOverview: async () => ({
-      tenantId: tenant.tenantId,
+      tenantId,
       metrics: overviewMetrics(),
       recentActivity: previewGovernanceLogs,
-      setupWarnings: [],
+      setupWarnings: [
+        "Preview mode does not include live tenant metrics.",
+        "Connect a real backend workspace before relying on portal values.",
+      ],
       systemHealth: {
-        status: "healthy",
-        subscription: "active",
+        status: "unknown",
+        subscription: "none",
       },
     }),
-    getMetrics: async () => {
-      const metrics = overviewMetrics();
-
-      return {
-        tenantId: tenant.tenantId,
-        decisionCounts: {
-          answered: metrics.aiResolved,
-          escalated: metrics.humanEscalated,
-          closed: 0,
-          total: metrics.aiResolved + metrics.humanEscalated,
-        },
-        deflectionRate: metrics.deflectionRate,
-        humanHoursSaved: metrics.humanHoursSaved,
-      };
-    },
+    getMetrics: async () => ({
+      tenantId,
+      decisionCounts: {
+        answered: 0,
+        escalated: 0,
+        closed: 0,
+        total: 0,
+      },
+      deflectionRate: 0,
+      humanHoursSaved: 0,
+    }),
     getSessions: async () => ({
-      tenantId: tenant.tenantId,
+      tenantId,
       sessions: previewSessions,
     }),
     getSession: async (id) => ({
-      tenantId: tenant.tenantId,
-      session: previewSessions.find((session) => session.id === id) ?? previewSessions[0],
+      tenantId,
+      session: emptySession(id),
       governanceLogs: previewGovernanceLogs,
     }),
-    getKnowledgeBase: async (params) => {
-      const search = params?.search?.trim().toLowerCase();
-      const entries = previewKnowledgeBase.filter((entry) => {
-        if (typeof params?.active === "boolean" && entry.active !== params.active) {
-          return false;
-        }
-        if (!search) {
-          return true;
-        }
-        return [entry.domainId, entry.question, entry.answer, ...entry.tags].some((value) =>
-          value.toLowerCase().includes(search),
-        );
-      });
-
-      return {
-        tenantId: tenant.tenantId,
-        entries,
-      };
-    },
+    getKnowledgeBase: async () => ({
+      tenantId,
+      entries: previewKnowledgeBase,
+    }),
     createKnowledgeEntry: async (payload) => ({
       ...payload,
       id: `kb_preview_${Date.now()}`,
       createdAt: now,
       updatedAt: now,
     }),
-    updateKnowledgeEntry: async (id, payload) => {
-      const existing = previewKnowledgeBase.find((entry) => entry.id === id) ?? previewKnowledgeBase[0];
-      return {
-        ...existing,
-        ...payload,
-        id,
-        updatedAt: now,
-      };
-    },
-    deleteKnowledgeEntry: async (id) => {
-      const existing = previewKnowledgeBase.find((entry) => entry.id === id) ?? previewKnowledgeBase[0];
-      return {
-        ...existing,
-        active: false,
-        updatedAt: now,
-      };
-    },
-    testQuestion: async (payload) => {
-      const question = payload.question.trim();
-      const match =
-        previewKnowledgeBase.find((entry) => question.toLowerCase().includes(entry.domainId.toLowerCase())) ??
-        previewKnowledgeBase[0];
-
-      return {
-        tenantId: tenant.tenantId,
-        question,
-        domainId: match.domainId,
-        dryRun: true,
-        decision: "answered",
-        response: match.answer,
-        matchedKnowledgeBaseEntry: match,
-        confidenceScore: 0.86,
-        threshold: payload.confidenceThreshold ?? 0.75,
-        reason: "Preview mode matched this against the sample approved knowledge base.",
-        entriesConsidered: previewKnowledgeBase.length,
-      };
-    },
+    updateKnowledgeEntry: async (id, payload) => ({
+      id,
+      domainId: typeof payload.domainId === "string" ? payload.domainId : "",
+      question: typeof payload.question === "string" ? payload.question : "",
+      answer: typeof payload.answer === "string" ? payload.answer : "",
+      tags: Array.isArray(payload.tags) ? payload.tags.filter((value): value is string => typeof value === "string") : [],
+      active: typeof payload.active === "boolean" ? payload.active : true,
+      createdAt: now,
+      updatedAt: now,
+    }),
+    deleteKnowledgeEntry: async (id) => ({
+      id,
+      domainId: "",
+      question: "",
+      answer: "",
+      tags: [],
+      active: false,
+      createdAt: now,
+      updatedAt: now,
+    }),
+    testQuestion: async (payload) => ({
+      tenantId,
+      question: payload.question.trim(),
+      domainId: null,
+      dryRun: true,
+      decision: "insufficient_data",
+      response: null,
+      matchedKnowledgeBaseEntry: null,
+      confidenceScore: null,
+      threshold: payload.confidenceThreshold ?? 0.75,
+      reason: "Preview mode does not include live approved knowledge yet.",
+      entriesConsidered: 0,
+    }),
     getBrandVoice: async (): Promise<BrandVoiceResponse> => ({
-      tenantId: tenant.tenantId,
+      tenantId,
       brandVoice: tenant.brandVoice,
     }),
     saveBrandVoice: async (payload) => ({
-      tenantId: tenant.tenantId,
+      tenantId,
       brandVoice: {
         ...tenant.brandVoice,
         ...payload,
       },
     }),
     getGovernance: async () => ({
-      tenantId: tenant.tenantId,
+      tenantId,
       logs: previewGovernanceLogs,
     }),
     getIntegrations: async () => ({
-      tenantId: tenant.tenantId,
-      integrations: previewIntegrations,
+      tenantId,
+      integrations: previewIntegrations.map((integration) => ({ ...integration, tenantId })),
     }),
     saveWhatsAppIntegration: async (payload) => ({
       ...previewIntegrations[0],
       ...payload,
       provider: "whatsapp",
-      tenantId: tenant.tenantId,
+      tenantId,
       updatedAt: now,
     }),
     createCheckoutSession: async () => ({ id: "preview_checkout", url: "/settings?billing=preview" }),

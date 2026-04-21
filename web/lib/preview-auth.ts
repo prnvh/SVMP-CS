@@ -50,8 +50,8 @@ export function getPreviewAllowedEmails() {
 
 export function getPreviewTenant() {
   return {
-    tenantId: process.env.PORTAL_PREVIEW_TENANT_ID?.trim() || "stay",
-    tenantName: process.env.PORTAL_PREVIEW_TENANT_NAME?.trim() || "Stay Parfums",
+    tenantId: process.env.PORTAL_PREVIEW_TENANT_ID?.trim() || "preview",
+    tenantName: process.env.PORTAL_PREVIEW_TENANT_NAME?.trim() || "Preview workspace",
   };
 }
 

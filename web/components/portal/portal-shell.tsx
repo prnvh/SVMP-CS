@@ -48,12 +48,12 @@ export function PortalShell({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
-  const nav = me.hasActiveSubscription
+  const previewAuth = isPreviewAuthMode();
+  const nav = previewAuth || me.hasActiveSubscription
     ? navItems
     : [{ label: "Settings", href: "/settings", icon: Settings }];
   const subscriptionLabel = tenant.billing.status.replace("_", " ");
   const displayName = tenantDisplayName(me, tenant) ?? "\u2014";
-  const previewAuth = isPreviewAuthMode();
 
   return (
     <div className="min-h-screen bg-paper text-ink">
@@ -95,7 +95,9 @@ export function PortalShell({
                 {displayName}
               </div>
               <p className="mt-3 text-sm leading-6 text-ink/62">
-                {me.hasActiveSubscription
+                {previewAuth
+                  ? "Preview mode is on. Portal pages stay visible, but values remain empty until a real workspace is connected."
+                  : me.hasActiveSubscription
                   ? "Subscription is active. Operational pages are available."
                   : "Subscription access is inactive. Billing is the only available area."}
               </p>

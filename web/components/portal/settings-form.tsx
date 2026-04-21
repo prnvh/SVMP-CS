@@ -8,6 +8,7 @@ import {
   sanitizeSupportEmail,
   sanitizeTenantName,
   sanitizeWebsiteUrl,
+  isDemoTenantValue,
 } from "@/lib/tenant-display";
 import { isPreviewAuthMode } from "@/lib/clerk-env";
 import { useBrowserApi } from "@/services/api/browser";
@@ -45,6 +46,7 @@ export function SettingsForm({
   );
   const previewAuth = isPreviewAuthMode();
   const gatewayBilling = process.env.NEXT_PUBLIC_BILLING_MODE?.trim().toLowerCase() === "stripe";
+  const tenantScope = isDemoTenantValue(me.tenantId) ? "\u2014" : me.tenantId;
 
   function saveSettings() {
     setFeedback(null);
@@ -122,7 +124,7 @@ export function SettingsForm({
 
         <Panel
           title="Business profile"
-          eyebrow={tenant.tenantId}
+          eyebrow={tenantScope}
           action={
             <button
               type="button"
@@ -194,7 +196,7 @@ export function SettingsForm({
               Access scope: {me.organizationId}
             </div>
             <div className="rounded-[8px] border border-line bg-paper p-4 text-sm leading-6 text-ink/64">
-              Role: {me.role}. Tenant: {me.tenantId}.
+              Role: {me.role}. Tenant: {tenantScope}.
             </div>
           </div>
         </Panel>
