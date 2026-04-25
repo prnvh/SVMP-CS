@@ -41,18 +41,9 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     PORT: int = 8000
 
-    MONGODB_URI: str | None = None
-    MONGODB_DB_NAME: str = "svmp"
-    MONGODB_SESSION_COLLECTION: str = "session_state"
-    MONGODB_KB_COLLECTION: str = "knowledge_base"
-    MONGODB_GOVERNANCE_COLLECTION: str = "governance_logs"
-    MONGODB_TENANTS_COLLECTION: str = "tenants"
-    MONGODB_VERIFIED_USERS_COLLECTION: str = "verified_users"
-    MONGODB_BILLING_SUBSCRIPTIONS_COLLECTION: str = "billing_subscriptions"
-    MONGODB_INTEGRATION_STATUS_COLLECTION: str = "integration_status"
-    MONGODB_AUDIT_LOGS_COLLECTION: str = "audit_logs"
-    MONGODB_PROVIDER_EVENTS_COLLECTION: str = "provider_events"
+    DATABASE_URL: str | None = None
     SHARED_KB_TENANT_ID: str = "__shared__"
+    DB_AUTO_APPLY_MIGRATIONS: bool = False
 
     OPENAI_API_KEY: SecretStr | None = None
     EMBEDDING_MODEL: str = "text-embedding-3-small"
@@ -77,6 +68,7 @@ class Settings(BaseSettings):
     SIMILARITY_THRESHOLD: float = 0.75
     WORKFLOW_B_INTERVAL_SECONDS: int = 1
     WORKFLOW_B_PROCESSING_LOCK_TIMEOUT_SECONDS: int = 300
+    WORKFLOW_B_MAX_BATCH_SIZE: int = 25
     WORKFLOW_C_INTERVAL_HOURS: int = 24
     ONBOARDING_FETCH_TIMEOUT_SECONDS: int = 10
     ONBOARDING_MAX_SITE_PAGES: int = 8
@@ -85,16 +77,39 @@ class Settings(BaseSettings):
     ONBOARDING_FAQ_TARGET_COUNT: int = 30
 
     DASHBOARD_AUTH_MODE: str = "disabled"
-    CLERK_ISSUER: str | None = None
-    CLERK_JWKS_URL: str | None = None
-    CLERK_AUDIENCE: str | None = None
+    SUPABASE_PROJECT_URL: str | None = None
+    SUPABASE_JWT_ISSUER: str | None = None
+    SUPABASE_JWKS_URL: str | None = None
+    SUPABASE_JWT_AUDIENCE: str | None = "authenticated"
     DASHBOARD_APP_URL: str | None = None
     DASHBOARD_CORS_ORIGINS: str | None = None
+
+    INTERNAL_JOB_SECRET: SecretStr | None = None
 
     STRIPE_SECRET_KEY: SecretStr | None = None
     STRIPE_WEBHOOK_SECRET: SecretStr | None = None
     STRIPE_PRICE_ID: str | None = None
     BILLING_MODE: str = "manual"
+
+    def supabase_auth_issuer(self) -> str | None:
+        """Return the normalized Supabase Auth issuer when configured."""
+
+        if not _missing_string(self.SUPABASE_JWT_ISSUER):
+            return self.SUPABASE_JWT_ISSUER.strip().rstrip("/")
+        if not _missing_string(self.SUPABASE_PROJECT_URL):
+            return f"{self.SUPABASE_PROJECT_URL.strip().rstrip('/')}/auth/v1"
+        return None
+
+    def supabase_jwks_url(self) -> str | None:
+        """Return the normalized Supabase JWKS URL when configured."""
+
+        if not _missing_string(self.SUPABASE_JWKS_URL):
+            return self.SUPABASE_JWKS_URL.strip()
+
+        issuer = self.supabase_auth_issuer()
+        if issuer is None:
+            return None
+        return f"{issuer}/.well-known/jwks.json"
 
     def validate_runtime(self) -> None:
         """Fail fast when the live runtime is missing required env values."""
@@ -102,10 +117,11 @@ class Settings(BaseSettings):
         missing: list[str] = []
         production = self.APP_ENV.strip().lower() in {"prod", "production"}
 
-        if _missing_string(self.MONGODB_URI):
-            missing.append("MONGODB_URI")
+        if _missing_string(self.DATABASE_URL):
+            missing.append("DATABASE_URL")
         if self.OPENAI_API_KEY is None or _normalized_secret(self.OPENAI_API_KEY) is None:
             missing.append("OPENAI_API_KEY")
+
         provider = self.WHATSAPP_PROVIDER.strip().lower()
         if provider == "meta":
             if self.WHATSAPP_TOKEN is None or _normalized_secret(self.WHATSAPP_TOKEN) is None:
@@ -132,21 +148,28 @@ class Settings(BaseSettings):
                 )
             ):
                 missing.append("NORMALIZED_WEBHOOK_SECRET")
-        elif provider != "normalized":
+        else:
             missing.append("WHATSAPP_PROVIDER")
 
         dashboard_auth_mode = self.DASHBOARD_AUTH_MODE.strip().lower()
-        if production and dashboard_auth_mode != "clerk":
-            missing.append("DASHBOARD_AUTH_MODE=clerk")
-        if dashboard_auth_mode == "clerk" or production:
-            if _missing_string(self.CLERK_ISSUER):
-                missing.append("CLERK_ISSUER")
-            if _missing_string(self.CLERK_JWKS_URL):
-                missing.append("CLERK_JWKS_URL")
-            if production and _missing_string(self.CLERK_AUDIENCE):
-                missing.append("CLERK_AUDIENCE")
+        if production and dashboard_auth_mode != "supabase":
+            missing.append("DASHBOARD_AUTH_MODE=supabase")
+        if dashboard_auth_mode == "supabase" or production:
+            if _missing_string(self.SUPABASE_PROJECT_URL):
+                missing.append("SUPABASE_PROJECT_URL")
+            if self.supabase_auth_issuer() is None:
+                missing.append("SUPABASE_JWT_ISSUER")
+            if self.supabase_jwks_url() is None:
+                missing.append("SUPABASE_JWKS_URL")
             if production and _missing_string(self.DASHBOARD_APP_URL):
                 missing.append("DASHBOARD_APP_URL")
+
+        if production and (
+            self.INTERNAL_JOB_SECRET is None
+            or _normalized_secret(self.INTERNAL_JOB_SECRET) is None
+        ):
+            missing.append("INTERNAL_JOB_SECRET")
+
         billing_mode = self.BILLING_MODE.strip().lower()
         if billing_mode not in {"manual", "stripe"}:
             missing.append("BILLING_MODE")
@@ -175,12 +198,7 @@ def get_settings() -> Settings:
 def get_tenant_confidence_threshold(
     tenant_document: Mapping[str, Any] | None,
 ) -> float:
-    """Resolve a tenant confidence threshold or fail hard if it is missing.
-
-    The codebase keeps a global fallback threshold in settings for system defaults
-    and local development, but tenant-driven runtime logic should fail fast when
-    tenant configuration is missing or malformed so the caller can escalate safely.
-    """
+    """Resolve a tenant confidence threshold or fail hard if it is missing."""
 
     if tenant_document is None:
         raise ValueError("tenant document missing")

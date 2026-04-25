@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "svmp-cs"
 version = "0.1.0"
-description = "Mongo-first SVMP application for AI customer service workflows"
+description = "Supabase-first SVMP application for AI customer service workflows on Vercel"
 authors = [{name = "Pranav Harikumar", email = "prnvvh@gmail.com"}]
 requires-python = ">=3.11"
 dependencies = [
@@ -18,9 +18,8 @@ dependencies = [
     "PyJWT[crypto]==2.10.1",
     "structlog==24.4.0",
     "python-dotenv==1.0.1",
-    "apscheduler==3.10.4",
-    "motor==3.4.0",
-    "pymongo==4.8.0",
+    "sqlalchemy>=2.0.37,<2.1",
+    "psycopg[binary]>=3.2.3,<3.3",
 ]
 
 [project.optional-dependencies]

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 def _utcnow() -> datetime:
@@ -18,7 +18,11 @@ class KnowledgeEntry(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
-    id: str | None = Field(default=None, alias="_id")
+    id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("id", "_id"),
+        serialization_alias="id",
+    )
     tenant_id: str = Field(alias="tenantId")
     domain_id: str = Field(alias="domainId")
     question: str

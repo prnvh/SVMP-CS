@@ -188,11 +188,10 @@ class TenantRepository(ABC):
     async def resolve_dashboard_tenant_context(
         self,
         *,
-        auth_provider: str = "clerk",
+        auth_provider: str = "supabase",
         provider_user_id: str | None = None,
         email: str | None = None,
-        clerk_organization_id: str | None = None,
-        clerk_user_id: str | None = None,
+        organization_id: str | None = None,
     ) -> Mapping[str, Any] | None:
         """Resolve tenant user access, role, and billing state for dashboard APIs."""
 

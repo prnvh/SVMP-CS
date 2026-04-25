@@ -18,7 +18,7 @@ from svmp_core.exceptions import ValidationError
 
 _JWKS_CACHE_TTL_SECONDS = 300
 _jwks_cache: dict[str, tuple[float, Mapping[str, Any]]] = {}
-_ALLOWED_CLERK_JWT_ALGORITHMS = frozenset({"RS256"})
+_ALLOWED_SUPABASE_JWT_ALGORITHMS = frozenset({"RS256", "ES256"})
 
 
 class PortalRole(StrEnum):
@@ -64,7 +64,7 @@ class AuthenticatedUser(BaseModel):
 
     user_id: str
     organization_id: str | None = None
-    auth_provider: str = "clerk"
+    auth_provider: str = "supabase"
     email: str | None = None
     claims: dict[str, Any] = Field(default_factory=dict)
 
@@ -136,12 +136,7 @@ def authenticated_user_from_trusted_headers(
     organization_id: str | None,
     email: str | None = None,
 ) -> AuthenticatedUser:
-    """Build a user from trusted reverse-proxy headers.
-
-    This is only for local/staging scaffolding when
-    `DASHBOARD_AUTH_MODE=trusted_headers`. Production should use Clerk JWT
-    verification instead.
-    """
+    """Build a user from trusted reverse-proxy headers."""
 
     normalized_user_id = _non_blank(user_id)
     normalized_organization_id = _non_blank(organization_id)
@@ -184,46 +179,51 @@ async def _fetch_jwks(jwks_url: str) -> Mapping[str, Any]:
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="failed to fetch Clerk JWKS",
+            detail="failed to fetch Supabase JWKS",
         ) from exc
+
     if response.is_error:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="failed to fetch Clerk JWKS",
+            detail="failed to fetch Supabase JWKS",
         )
+
     try:
         jwks = response.json()
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Clerk JWKS is invalid",
+            detail="Supabase JWKS is invalid",
         ) from exc
+
     if not isinstance(jwks, Mapping) or not isinstance(jwks.get("keys"), list):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Clerk JWKS is invalid",
+            detail="Supabase JWKS is invalid",
         )
 
     _jwks_cache[jwks_url] = (now + _JWKS_CACHE_TTL_SECONDS, jwks)
     return jwks
 
 
-async def authenticated_user_from_clerk_jwt(
+async def authenticated_user_from_supabase_jwt(
     token: str,
     *,
     settings: Settings,
 ) -> AuthenticatedUser:
-    """Verify a Clerk JWT and return the dashboard user identity."""
+    """Verify a Supabase JWT and return the dashboard user identity."""
 
-    if settings.CLERK_ISSUER is None or not settings.CLERK_ISSUER.strip():
+    issuer = settings.supabase_auth_issuer()
+    jwks_url = settings.supabase_jwks_url()
+    if issuer is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Clerk issuer is not configured",
+            detail="Supabase issuer is not configured",
         )
-    if settings.CLERK_JWKS_URL is None or not settings.CLERK_JWKS_URL.strip():
+    if jwks_url is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Clerk JWKS URL is not configured",
+            detail="Supabase JWKS URL is not configured",
         )
 
     try:
@@ -231,7 +231,7 @@ async def authenticated_user_from_clerk_jwt(
     except jwt.InvalidTokenError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="invalid Clerk token",
+            detail="invalid Supabase token",
         ) from exc
 
     kid = header.get("kid")
@@ -239,15 +239,15 @@ async def authenticated_user_from_clerk_jwt(
     if not isinstance(kid, str) or not isinstance(algorithm, str):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="invalid Clerk token header",
+            detail="invalid Supabase token header",
         )
-    if algorithm not in _ALLOWED_CLERK_JWT_ALGORITHMS:
+    if algorithm not in _ALLOWED_SUPABASE_JWT_ALGORITHMS:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="unsupported Clerk token algorithm",
+            detail="unsupported Supabase token algorithm",
         )
 
-    jwks = await _fetch_jwks(settings.CLERK_JWKS_URL.strip())
+    jwks = await _fetch_jwks(jwks_url)
     key_data = next(
         (
             key
@@ -259,54 +259,63 @@ async def authenticated_user_from_clerk_jwt(
     if key_data is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Clerk token key is unknown",
+            detail="Supabase token key is unknown",
         )
 
     try:
-        public_key = jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(dict(key_data)))
+        public_key = jwt.PyJWK.from_dict(dict(key_data)).key
     except jwt.InvalidKeyError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="invalid Clerk token key",
+            detail="invalid Supabase token key",
         ) from exc
+
+    audience = settings.SUPABASE_JWT_AUDIENCE.strip() if settings.SUPABASE_JWT_AUDIENCE else None
     try:
         claims = jwt.decode(
             token,
             public_key,
-            algorithms=list(_ALLOWED_CLERK_JWT_ALGORITHMS),
-            audience=settings.CLERK_AUDIENCE if settings.CLERK_AUDIENCE else None,
-            issuer=settings.CLERK_ISSUER.strip(),
+            algorithms=list(_ALLOWED_SUPABASE_JWT_ALGORITHMS),
+            audience=audience,
+            issuer=issuer,
             options={
                 "require": ["exp", "iat", "iss", "sub"],
-                "verify_aud": bool(settings.CLERK_AUDIENCE),
+                "verify_aud": bool(audience),
             },
         )
     except jwt.InvalidTokenError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="invalid Clerk token",
+            detail="invalid Supabase token",
         ) from exc
 
     if not isinstance(claims, Mapping):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="invalid Clerk token claims",
+            detail="invalid Supabase token claims",
         )
 
     user_id = _non_blank(claims.get("sub"))
-    organization_id = _non_blank(claims.get("org_id"))
     if user_id is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Clerk token missing user id",
+            detail="Supabase token missing user id",
         )
+
+    app_metadata = _nested_mapping(claims.get("app_metadata"))
+    user_metadata = _nested_mapping(claims.get("user_metadata"))
+    organization_id = (
+        _non_blank(app_metadata.get("organization_id"))
+        or _non_blank(app_metadata.get("organizationId"))
+        or _non_blank(user_metadata.get("organization_id"))
+        or _non_blank(user_metadata.get("organizationId"))
+    )
 
     return AuthenticatedUser(
         user_id=user_id,
         organization_id=organization_id,
-        auth_provider="clerk",
-        email=_non_blank(claims.get("email"))
-        or _non_blank(claims.get("primary_email_address")),
+        auth_provider="supabase",
+        email=_non_blank(claims.get("email")),
         claims=dict(claims),
     )
 
@@ -315,25 +324,19 @@ def tenant_context_from_record(
     user: AuthenticatedUser,
     record: Mapping[str, Any],
 ) -> TenantContext:
-    """Build a tenant context from a backend-owned verified user record."""
+    """Build a tenant context from a backend-owned membership record."""
 
     tenant_id = _non_blank(record.get("tenantId"))
     if tenant_id is None:
         raise ValidationError("tenant context missing tenantId")
 
     billing = _nested_mapping(record.get("billing"))
-    subscription = _nested_mapping(record.get("subscription"))
-    subscription_status = (
-        record.get("subscriptionStatus")
-        or billing.get("status")
-        or subscription.get("status")
-    )
+    subscription_status = record.get("subscriptionStatus") or billing.get("status")
 
     return TenantContext(
         user_id=user.user_id,
         organization_id=user.organization_id
         or _non_blank(record.get("organizationId"))
-        or _non_blank(record.get("clerkOrganizationId"))
         or tenant_id,
         email=user.email or _non_blank(record.get("email")),
         tenant_id=tenant_id,
@@ -378,14 +381,14 @@ async def require_user(
                 detail=str(exc),
             ) from exc
 
-    if mode == "clerk":
+    if mode == "supabase":
         token = _bearer_token(authorization)
         if token is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="missing authorization header",
             )
-        return await authenticated_user_from_clerk_jwt(
+        return await authenticated_user_from_supabase_jwt(
             token,
             settings=runtime_settings,
         )
@@ -416,8 +419,7 @@ async def require_tenant_context(
         auth_provider=user.auth_provider,
         provider_user_id=user.user_id,
         email=user.email,
-        clerk_organization_id=user.organization_id,
-        clerk_user_id=user.user_id,
+        organization_id=user.organization_id,
     )
     if record is None:
         raise HTTPException(

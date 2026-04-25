@@ -1,30 +1,36 @@
-"""Database contracts for the SVMP core."""
+"""Database contracts and adapters for the SVMP core."""
 
 from __future__ import annotations
 
 from svmp_core.db.base import (
+    AuditLogRepository,
+    BillingSubscriptionRepository,
     Database,
     GovernanceLogRepository,
     KnowledgeBaseRepository,
+    ProviderEventRepository,
     SessionStateRepository,
     TenantRepository,
 )
 
 __all__ = [
+    "AuditLogRepository",
+    "BillingSubscriptionRepository",
     "Database",
     "GovernanceLogRepository",
     "KnowledgeBaseRepository",
-    "MongoDatabase",
+    "ProviderEventRepository",
     "SessionStateRepository",
+    "SupabaseDatabase",
     "TenantRepository",
 ]
 
 
 def __getattr__(name: str):
-    """Load Mongo-specific adapters lazily so contract imports stay lightweight."""
+    """Load concrete adapters lazily so contract imports stay lightweight."""
 
-    if name == "MongoDatabase":
-        from svmp_core.db.mongo import MongoDatabase
+    if name == "SupabaseDatabase":
+        from svmp_core.db.supabase import SupabaseDatabase
 
-        return MongoDatabase
+        return SupabaseDatabase
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
